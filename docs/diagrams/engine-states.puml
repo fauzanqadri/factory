@@ -9,25 +9,26 @@ skinparam state {
 }
 hide empty description
 
-[*] --> Stage : POST /runs\n(pipeline name@version pinned)
+[*] --> Stage : POST /runs, emit run.started\n(pipeline name@version pinned)
 
 state "Current stage (from the registry)" as Stage {
-  state "runStage activity\nhost /workflow/v1/turns\nrequestId = run:stage:attempt" as Run
+  state "emit stage.started\nrunStage activity\nhost /workflow/v1/turns\nrequestId = run:stage:attempt" as Run
   state "Waiting for approval\n(approval signal)" as Wait
-  state "remind activity" as Remind
+  state "emit gate.reminded\nremind activity" as Remind
   [*] --> Run
   Run --> Wait : host accepted the turn
   Wait --> Remind : remindAfter
   Remind --> Wait
-  Wait --> Run : reject\n(attempt + 1, with the note)
+  Wait --> Run : reject: emit stage.rejected\n(attempt + 1, with the note)
 }
 
-Stage --> Stage : approve and next() returns a stage
+Stage --> Stage : approve: emit stage.approved,\nnext() returns a stage
+Stage --> Stage : skip(ctx) true: emit stage.skipped,\nno turn, no gate
 Stage --> Finish : approve and next() returns { finish }
 Stage --> Finish : next stage not in the pipeline\n(not-in-pipeline)
 Stage --> Finish : cancel signal
 Stage --> Finish : gateTimeout\n(timed-out)
 
-state "finish activity\nhost /workflow/v1/runs/:id/finish" as Finish
+state "emit run.finished\nfinish activity\nhost /workflow/v1/runs/:id/finish" as Finish
 Finish --> [*]
 @enduml

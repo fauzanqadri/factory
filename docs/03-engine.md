@@ -13,9 +13,17 @@ export function makePipelineWorkflow(registry: Registry) {
   return async function pipelineWorkflow(input: StartRun & { pipelineVersion: number }) {
     const p = registry.getPipeline(input.pipeline, input.pipelineVersion);
     let current = p.stages[0];
+    await emit("run.started");
     for (;;) {
       if (!p.stages.includes(current)) return finish("not-in-pipeline");
       const def = registry.getStage(current);
+      if (def.skip?.(ctx)) {                          // decision hook, deterministic
+        await emit("stage.skipped", current);
+        const nxt = def.next(autoApproval(current), ctx);
+        if (typeof nxt !== "string") return finish(nxt.finish);
+        current = nxt;
+        continue;
+      }
       const result = await runStageAndWait(def, p);   // the stage turn, then the gate (below)
       if (result.kind !== "approved") return finish(result.kind);   // "cancelled" | "timed-out"
       const nxt = def.next(result.approval, ctx);
@@ -28,16 +36,18 @@ export function makePipelineWorkflow(registry: Registry) {
 
 `runStageAndWait` repeats for one stage until it is approved, or until the run is cancelled or times out:
 
-1. Activity `runStage({ runId, stage, attempt, note })`. It builds the prompt and calls the chat host's turn endpoint with `requestId = <runId>:<stage>:<attempt>`. It retries with backoff. The host ignores a repeated `requestId`, so a retry never runs the turn twice.
+1. `emit("stage.started")`, then activity `runStage({ runId, stage, attempt, note })`. It builds the prompt and calls the chat host's turn endpoint with `requestId = <runId>:<stage>:<attempt>`. It retries with backoff. The host ignores a repeated `requestId`, so a retry never runs the turn twice.
 2. Wait for an `approval` signal for this stage, a `cancel` signal, or a timer:
-   - **approve:** the stage is done; `next` picks what follows;
-   - **reject:** the same stage runs again as attempt N+1, with the rejection note in the prompt;
-   - **`remindAfter` elapsed:** activity `remind` posts a short nudge in the thread, then the wait continues;
+   - **approve:** `emit("stage.approved")`, the stage is done, and `next` picks what follows;
+   - **reject:** `emit("stage.rejected")`, then the same stage runs again as attempt N+1, with the rejection note in the prompt;
+   - **`remindAfter` elapsed:** `emit("gate.reminded")`, activity `remind` posts a short nudge in the thread, then the wait continues;
    - **`gateTimeout` elapsed:** the run finishes as `timed-out`;
    - **cancel:** the run finishes as `cancelled`.
 3. A repeated `gateId` is ignored. The run keeps the set of gate ids it has seen.
 
-Finish calls activity `finish`, which tells the host to post a closing line, and ends the workflow.
+Finish emits `run.finished`, calls activity `finish` (the host posts a closing line), and ends the workflow.
+
+`emit` is one activity for every event. It runs the app's handlers through `dispatchEvent` ([02-registry.md](02-registry.md#hooks)). Because the workflow's commands do not depend on which handlers exist, handlers can be added or removed between deploys without affecting replay.
 
 `runStage` returns as soon as the host **accepts** the turn, not when the agent finishes it. A turn can take minutes, and a code stage much longer. The run waits for the approval instead, which already means a person saw the result. That keeps activities short and their timeouts simple.
 

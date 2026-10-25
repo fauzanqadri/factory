@@ -1,9 +1,14 @@
-import type { PipelineDef, PromptFn, StageDef, StageName } from "./types.js";
+import type { HookEventName, HookHandler, HookOptions, PipelineDef, PromptFn, RegisteredHook, StageDef, StageName } from "./types.js";
 
 export interface Registry {
   stage(def: StageDef): void;
   pipeline(def: PipelineDef): void;
   prompt(stage: StageName, fn: PromptFn): void;
+  /** Register an event hook. Handlers run in registration order, in the emit activity. */
+  on(event: HookEventName, handler: HookHandler): void;
+  on(event: HookEventName, options: HookOptions, handler: HookHandler): void;
+  /** Hooks that apply to one event at one stage of one pipeline, in registration order. */
+  hooksFor(event: HookEventName, where: { stage?: StageName; pipeline: string }): RegisteredHook[];
   getStage(name: StageName): StageDef;
   /** A named version, or the highest registered version when `version` is omitted. */
   getPipeline(name: string, version?: number): PipelineDef;
@@ -20,6 +25,8 @@ export function createRegistry(): Registry {
   const stages = new Map<StageName, StageDef>();
   const pipelines = new Map<string, PipelineDef>();
   const prompts = new Map<StageName, PromptFn>();
+  const hooks: RegisteredHook[] = [];
+  const list = (v: string | string[] | undefined) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
   const key = (name: string, version: number) => `${name}@${version}`;
 
   return {
@@ -37,6 +44,21 @@ export function createRegistry(): Registry {
     prompt(stage, fn) {
       if (prompts.has(stage)) throw new Error(`prompt for "${stage}" is already registered`);
       prompts.set(stage, fn);
+    },
+    on(event: HookEventName, a: HookOptions | HookHandler, b?: HookHandler) {
+      const [options, handler] = typeof a === "function" ? [{}, a] : [a, b];
+      if (typeof handler !== "function") throw new Error(`hook for "${event}" needs a handler`);
+      hooks.push({ event, options: { ...options, mode: options.mode ?? "best-effort" }, handler });
+    },
+    hooksFor(event, where) {
+      return hooks.filter((h) => {
+        if (h.event !== event) return false;
+        const stages = list(h.options.stage);
+        const pipes = list(h.options.pipeline);
+        if (stages && (where.stage === undefined || !stages.includes(where.stage))) return false;
+        if (pipes && !pipes.includes(where.pipeline)) return false;
+        return true;
+      });
     },
     getStage(name) {
       const s = stages.get(name);
@@ -66,6 +88,11 @@ export function createRegistry(): Registry {
           if (!stages.has(s)) problems.push(`pipeline "${key(p.name, p.version)}" uses unregistered stage "${s}"`);
           else if (!prompts.has(s)) problems.push(`stage "${s}" (pipeline "${key(p.name, p.version)}") has no prompt`);
         }
+      }
+      const pipelineNames = new Set([...pipelines.values()].map((p) => p.name));
+      for (const h of hooks) {
+        for (const s of list(h.options.stage) ?? []) if (!stages.has(s)) problems.push(`hook on "${h.event}" filters on unregistered stage "${s}"`);
+        for (const n of list(h.options.pipeline) ?? []) if (!pipelineNames.has(n)) problems.push(`hook on "${h.event}" filters on unregistered pipeline "${n}"`);
       }
       return problems;
     },

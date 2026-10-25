@@ -11,6 +11,7 @@ my-app/
   src/
     registry.ts     stages, pipelines (static code only)
     prompts.ts      registry.prompt(...) for each stage
+    hooks.ts        registry.on(...) event hooks (tracker, chat, metrics)
     workflows.ts    export const pipelineWorkflow = makePipelineWorkflow(registry)
     main.ts         startFactory({ registry, workflowsPath, ... })
   test/
@@ -52,6 +53,8 @@ my-app/
 | Change | How |
 |---|---|
 | Prompt wording | Edit the prompt and deploy. Running runs pick it up on their next stage |
+| Event hooks | Add, change or remove handlers and deploy. No new pipeline version |
+| A `skip` rule | A decision hook: register a new pipeline version |
 | A new stage, a different order, different `next` logic | Register the stage, then a new pipeline version. New runs use it; running runs finish on their old version |
 | Removing an old pipeline version | Only after the dashboard shows no running run on it |
 | Gate timers | Part of the pipeline version (or the stage), so register a new version |

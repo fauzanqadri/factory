@@ -10,7 +10,7 @@ An app built on factory registers its stages and pipelines in a registry. The fr
 
 The chat host (the reference is [slaude](https://github.com/barockok/slaude)) runs the agent turns and shows the approval cards.
 
-Status: design and skeleton. The registry and types are implemented and tested. The engine, HTTP API and dashboard are specified in `docs/` and not built yet.
+Status: design and skeleton. The registry, hooks dispatch and types are implemented and tested. The engine, HTTP API and dashboard are specified in `docs/` and not built yet.
 
 ## Why
 
@@ -45,6 +45,7 @@ The framework never talks to the sandbox. The chat host is the only part that ta
 | Run | One execution of the pipeline workflow for one chat thread |
 | Starter / participant | The person who started the run, and the people they added. Only they may approve |
 | Gate | The wait after a stage for an approval signal, with a reminder timer and a give-up timer |
+| Hook | Event hooks (`registry.on("stage.approved", handler)`) for side effects at fixed points; decision hooks (`skip`, `next`) for the path |
 
 ## An app in a few lines
 
@@ -67,6 +68,8 @@ registry.pipeline({
 });
 
 registry.prompt("triage", (ctx) => `Triage ${ctx.ticketRef ?? "the request"}. End with an approval card.`);
+
+registry.on("stage.approved", async (e) => tracker.addLabel(e.ticketRef, `approved:${e.stage}`));
 ```
 
 [docs/07-building-an-app.md](docs/07-building-an-app.md) covers the worker entry point and deployment.
@@ -76,7 +79,7 @@ registry.prompt("triage", (ctx) => `Triage ${ctx.ticketRef ?? "the request"}. En
 | File | Question it answers |
 |---|---|
 | [01-concepts.md](docs/01-concepts.md) | What a stage, pipeline, gate and run are, and who does what (framework, app, chat host, sandbox) |
-| [02-registry.md](docs/02-registry.md) | How an app registers stages, pipelines and prompts; versioning and determinism rules |
+| [02-registry.md](docs/02-registry.md) | How an app registers stages, pipelines, prompts and hooks; versioning and determinism rules |
 | [03-engine.md](docs/03-engine.md) | What one run looks like inside Temporal, step by step, with failure cases |
 | [04-http-contract.md](docs/04-http-contract.md) | The calls between the chat host and the framework, with auth and idempotency |
 | [05-chat-host.md](docs/05-chat-host.md) | What a chat host must provide (starter, participants, approval cards, turn injection) and how slaude does it |
@@ -88,10 +91,12 @@ registry.prompt("triage", (ctx) => `Triage ${ctx.ticketRef ?? "the request"}. En
 ```
 src/
   types.ts       stage, pipeline, approval and run types
-  registry.ts    createRegistry(): stages, pipelines, prompts (implemented)
+  registry.ts    createRegistry(): stages, pipelines, prompts, hooks (implemented)
+  hooks.ts       dispatchEvent(): runs event hooks, required first (implemented)
   index.ts       public exports
 test/
   registry.test.ts
+  hooks.test.ts
 docs/            design (above), diagrams in docs/diagrams
 ```
 

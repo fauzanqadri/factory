@@ -45,10 +45,62 @@ export interface StageDef {
   remindAfter?: Duration;
   gateTimeout?: Duration;
   /**
+   * Decision hook: true passes straight through this stage (no turn, no gate) to
+   * what `next` returns for an automatic approval. Runs inside the workflow:
+   * deterministic, plain data only. Changing it needs a new pipeline version.
+   */
+  skip?(ctx: RunContext): boolean;
+  /**
    * Decides what follows an approval. Runs inside the Temporal workflow, so it
    * must be deterministic: no clock, randomness, I/O or environment reads.
    */
   next(approval: Approval, ctx: RunContext): Next;
+}
+
+/** Points in a run where the workflow emits an event to registered handlers. */
+export type HookEventName =
+  | "run.started"
+  | "stage.started"
+  | "stage.skipped"
+  | "stage.approved"
+  | "stage.rejected"
+  | "gate.reminded"
+  | "run.finished";
+
+export interface HookEvent extends RunContext {
+  name: HookEventName;
+  /** Unique per emission (`<runId>:<name>:<stage>:<attempt>`); use it to make handlers idempotent. */
+  eventId: string;
+  /** ISO time the workflow emitted the event (workflow time, deterministic). */
+  at: string;
+  stage?: StageName;
+  attempt?: number;
+  approval?: Approval;
+  waitingSince?: string;
+  finish?: FinishReason;
+}
+
+/**
+ * `best-effort` (default): errors are logged and never block the run.
+ * `required`: an error fails the emit activity, Temporal retries it, and the run waits.
+ */
+export type HookMode = "best-effort" | "required";
+
+export interface HookOptions {
+  /** Only for these stages (default: every stage). */
+  stage?: StageName | StageName[];
+  /** Only for these pipelines (default: every pipeline). */
+  pipeline?: string | string[];
+  mode?: HookMode;
+}
+
+/** Event hook: runs in an activity, so it may do I/O. Activities run at least once: be idempotent on `eventId`. */
+export type HookHandler = (event: HookEvent) => Promise<void> | void;
+
+export interface RegisteredHook {
+  event: HookEventName;
+  options: Required<Pick<HookOptions, "mode">> & Omit<HookOptions, "mode">;
+  handler: HookHandler;
 }
 
 export interface PipelineDef {
@@ -90,5 +142,5 @@ export interface RunState {
   finish?: FinishReason;
   /** ISO time the current gate started waiting, when waiting. */
   waitingSince?: string;
-  history: Array<{ stage: StageName; attempt: number; decision: "approve" | "reject"; by: string; at: string; note?: string; outcome?: string }>;
+  history: Array<{ stage: StageName; attempt: number; decision: "approve" | "reject" | "skip"; by: string; at: string; note?: string; outcome?: string }>;
 }
