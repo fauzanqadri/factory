@@ -1,6 +1,6 @@
 # 04. HTTP contract
 
-Status: specified, not built.
+Status: implemented. The factory API is `createApi` in `src/server.ts`; the callbacks are called by `src/activities.ts`.
 
 Two directions, each with its own bearer token. The framework never calls the sandbox.
 
@@ -10,8 +10,8 @@ Bearer: `FACTORY_API_TOKEN`.
 
 | Call | Body | Result |
 |---|---|---|
-| `POST /runs` | `StartRun`: `pipeline, pipelineVersion?, channelId, threadTs, sessionId, starter, ticketRef?, request` | `201 { runId }`. `409` when the thread already has a running run. `422` for an unknown pipeline |
-| `POST /runs/:runId/approvals` | `Approval`: `gateId, stage, decision, by, outcome?, note?` | `202`. Idempotent on `gateId` |
+| `POST /runs` | `StartRun`: `pipeline, pipelineVersion?, channelId, threadTs, sessionId, starter, ticketRef?, request` | `201 { runId, pipeline, pipelineVersion }`. `400` for a missing field. `409` when the thread already has a running run. `422` for an unknown pipeline |
+| `POST /runs/:runId/approvals` | `Approval`: `gateId, stage, attempt?, decision, by, outcome?, note?` | `202`. `404` for an unknown run. Idempotent on `gateId`. When `attempt` is set, a card from an earlier attempt is ignored, so send it |
 | `POST /runs/:runId/cancel` | `{ by }` | `202` |
 | `GET /runs/:runId` | | `RunState` (the `state` query) |
 | `GET /healthz` | | `200`, no auth |

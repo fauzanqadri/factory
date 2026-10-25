@@ -17,6 +17,8 @@ export interface Approval {
   /** Unique per approval card; a repeated gateId is ignored. */
   gateId: string;
   stage: StageName;
+  /** The attempt the card was posted for. When set, a card from an earlier attempt is ignored. */
+  attempt?: number;
   decision: "approve" | "reject";
   /** Chat user id of the starter or participant who clicked. */
   by: string;

@@ -1,6 +1,6 @@
 # 07. Building an app on factory
 
-Status: the registry is implemented. The worker, API and dashboard helpers named below are specified, not built.
+Status: everything below is implemented except the dashboard ([06-dashboard.md](06-dashboard.md)).
 
 An app is its own repo. It depends on `@fauzanqadri/factory`, describes its work in a registry, and runs one process that is the Temporal worker, the HTTP API and the dashboard together.
 
@@ -25,17 +25,28 @@ my-app/
 3. **Export the workflow** in `src/workflows.ts`. It is the only file the Temporal bundler loads:
    ```ts
    import { makePipelineWorkflow } from "@fauzanqadri/factory/workflow";
-   import { registry } from "./registry";
+   import { registry } from "./registry.js";
    export const pipelineWorkflow = makePipelineWorkflow(registry);
    ```
 4. **Start the process** in `src/main.ts`:
    ```ts
+   import { fileURLToPath } from "node:url";
    import { startFactory } from "@fauzanqadri/factory/server";
-   import { registry } from "./registry";
-   import "./prompts";
-   await startFactory({ registry, workflowsPath: fileURLToPath(new URL("./workflows.js", import.meta.url)) });
+   import { registry } from "./registry.js";
+   import "./prompts.js";
+   import "./hooks.js";
+
+   const env = (k: string) => process.env[k] ?? "";
+   await startFactory({
+     registry,
+     workflowsPath: fileURLToPath(new URL("./workflows.js", import.meta.url)),
+     temporal: { address: env("TEMPORAL_ADDRESS"), namespace: env("TEMPORAL_NAMESPACE"), taskQueue: env("TEMPORAL_TASK_QUEUE") },
+     host: { url: env("CHAT_HOST_URL"), token: env("FACTORY_CALLBACK_TOKEN") },
+     apiToken: env("FACTORY_API_TOKEN"),
+     port: Number(env("PORT") || 8080),
+   });
    ```
-   `startFactory` runs `registry.validate()` and refuses to start on any problem. It then starts the worker, the API and the dashboard on one port.
+   `startFactory` runs `registry.validate()` and refuses to start on any problem, or when the callback token is shorter than 32 characters or the API token is empty. It then starts the Temporal worker and the HTTP API in one process. The dashboard will mount on the same port once built.
 5. **Test the app's paths** with `@temporalio/testing` (time skipping). For each pipeline, approve, reject and time out each stage, and check the finish reason.
 
 ## Configuration (env only, one image for every environment)

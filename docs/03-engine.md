@@ -1,6 +1,6 @@
 # 03. The engine: one run, step by step
 
-Status: specified, not built.
+Status: implemented in `src/workflow.ts`, tested in `test/workflow.test.ts`.
 
 One run is one Temporal workflow execution, `run-<channelId>-<threadTs>`. It runs from the first stage to finish. Stages are steps inside it: a stage never starts another workflow.
 
