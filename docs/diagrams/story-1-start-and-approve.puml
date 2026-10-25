@@ -1,0 +1,46 @@
+@startuml story-1-start-and-approve
+' Domain story: start a run and approve a stage.
+left to right direction
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam rectangle {
+  BackgroundColor #FFF8E1
+  BorderColor #8D6E63
+}
+skinparam actor {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+
+actor "Starter" as eng
+actor "Participant" as part
+actor "Chat host\n(agent turns,\napproval cards)" as host
+actor "factory\n(worker + API)" as fac
+actor "Temporal" as tmp
+
+rectangle "/workflow start <ticket>" as start
+rectangle "run\nrun-<channel>-<thread>" as run
+rectangle "run the first stage" as turn1
+rectangle "stage result +\napproval card" as card
+rectangle "/participant add @user" as add
+rectangle "Approve click" as click
+rectangle "approval\n(gateId, stage)" as appr
+rectangle "run the next stage" as turn2
+
+eng --> start : 1 types
+start --> host : 1 to
+host --> fac : 2 records the starter\nand asks to start
+fac --> run : 3 starts
+run --> tmp : 3 in
+tmp --> turn1 : 4 sends
+turn1 --> host : 4 to
+host --> card : 5 posts
+eng --> add : 6 types
+part --> click : 7 gives
+click --> host : 7 to
+host --> appr : 8 checks the clicker,\nthen sends
+appr --> fac : 8 to
+fac --> tmp : 9 signals the run in
+tmp --> turn2 : 10 sends
+turn2 --> host : 10 to
+@enduml

@@ -1,0 +1,33 @@
+@startuml engine-states
+' Inside one run of the pipeline workflow. Every box is a step in the same
+' workflow execution; stages never start child workflows.
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam state {
+  BackgroundColor #FFF8E1
+  BorderColor #8D6E63
+}
+hide empty description
+
+[*] --> Stage : POST /runs\n(pipeline name@version pinned)
+
+state "Current stage (from the registry)" as Stage {
+  state "runStage activity\nhost /workflow/v1/turns\nrequestId = run:stage:attempt" as Run
+  state "Waiting for approval\n(approval signal)" as Wait
+  state "remind activity" as Remind
+  [*] --> Run
+  Run --> Wait : host accepted the turn
+  Wait --> Remind : remindAfter
+  Remind --> Wait
+  Wait --> Run : reject\n(attempt + 1, with the note)
+}
+
+Stage --> Stage : approve and next() returns a stage
+Stage --> Finish : approve and next() returns { finish }
+Stage --> Finish : next stage not in the pipeline\n(not-in-pipeline)
+Stage --> Finish : cancel signal
+Stage --> Finish : gateTimeout\n(timed-out)
+
+state "finish activity\nhost /workflow/v1/runs/:id/finish" as Finish
+Finish --> [*]
+@enduml

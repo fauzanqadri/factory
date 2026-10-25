@@ -1,0 +1,31 @@
+@startuml story-3-dashboard
+' Domain story: a lead monitors runs on the dashboard.
+left to right direction
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam rectangle {
+  BackgroundColor #FFF8E1
+  BorderColor #8D6E63
+}
+skinparam actor {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+
+actor "Lead" as lead
+actor "factory\n(dashboard)" as fac
+actor "Temporal" as tmp
+
+rectangle "dashboard page\n(behind an OIDC proxy)" as page
+rectangle "running and recent runs" as list
+rectangle "state of each:\nstage, attempt,\nwaiting since" as state
+rectangle "table + links:\nchat thread, ticket,\nTemporal run" as table
+
+lead --> page : 1 opens
+fac --> list : 2 lists
+list --> tmp : 2 from
+fac --> state : 3 queries
+state --> tmp : 3 from
+fac --> table : 4 renders
+table --> lead : 4 for
+@enduml
