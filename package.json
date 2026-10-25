@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepare": "tsc -p tsconfig.json"
   },
   "engines": {
     "node": ">=22"
@@ -45,5 +46,9 @@
       "types": "./dist/server.d.ts",
       "default": "./dist/server.js"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fauzanqadri/factory.git"
   }
 }
