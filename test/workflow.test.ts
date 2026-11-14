@@ -138,6 +138,26 @@ describe("pipeline workflow", () => {
     expect(calls.at(-1)).toEqual({ kind: "finish", reason: "timed-out" });
   });
 
+  test("a loop back to an earlier stage runs a fresh turn: unique requestId and eventId, stale cards ignored", async () => {
+    const h = await start({ pipeline: "loop" });
+    await waitingAt(h, "draft"); await approve(h, "draft");
+    await waitingAt(h, "review"); await approve(h, "review", { outcome: "revise" });
+    await waitingAt(h, "draft", 2); // the second visit counts as attempt 2, not a repeat of attempt 1
+    await h.signal(approvalSignal, { gateId: "old-card", stage: "draft", attempt: 1, decision: "approve", by: "U3" }); // card from the first visit
+    expect((await h.query(stateQuery)).stage).toBe("draft");
+    await approve(h, "draft", { attempt: 2 });
+    await waitingAt(h, "review", 2); await approve(h, "review", { attempt: 2 });
+    const res = (await h.result()) as PipelineResult;
+    expect(res.finish).toBe("done");
+
+    const turns = calls.filter((c) => c.kind === "runStage");
+    expect(turns.map((c) => `${c.stage}#${c.attempt}`)).toEqual(["draft#1", "review#1", "draft#2", "review#2"]);
+    const ids = turns.map((c) => c.requestId as string);
+    expect(new Set(ids).size).toBe(ids.length); // the host drops a repeated requestId, so a revisit must not reuse one
+    const eventIds = events.map((e) => e.eventId);
+    expect(new Set(eventIds).size).toBe(eventIds.length);
+  });
+
   test("cancel finishes the run as cancelled", async () => {
     const h = await start();
     await waitingAt(h, "intake");
