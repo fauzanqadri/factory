@@ -59,4 +59,16 @@ describe("registry", () => {
       'pipeline "p@1" uses unregistered stage "b"',
     ]);
   });
+  test("skills: registered by name, duplicates and bad sources throw, unknown ones on a stage show in validate()", () => {
+    const r = sample();
+    r.skill("tdd", { path: "skills/tdd" });
+    expect(r.getSkillDecls().map((d) => d.name)).toEqual(["tdd"]);
+    expect(() => r.skill("tdd", { path: "x" })).toThrow("already registered");
+    expect(() => r.skill("bad name", { path: "x" })).toThrow("must be");
+    expect(() => r.skill("p", { path: "" })).toThrow("exactly one");
+    expect(() => r.skill("p", { path: "a", package: "b" } as never)).toThrow("exactly one");
+    const withSkills = createRegistry();
+    withSkills.stage({ name: "a", runsIn: "host", skills: ["missing"], next: () => ({ finish: "done" }) });
+    expect(withSkills.validate()).toContain('stage "a" uses unregistered skill "missing"');
+  });
 });

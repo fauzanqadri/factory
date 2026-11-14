@@ -4,6 +4,7 @@ import { Client, Connection, WorkflowExecutionAlreadyStartedError, WorkflowNotFo
 import { NativeConnection, Worker } from "@temporalio/worker";
 import { makeActivities, type HostConfig } from "./activities.js";
 import type { Registry } from "./registry.js";
+import { loadSkills, type LoadSkillsOptions } from "./skills.js";
 import type { Approval, StartRun } from "./types.js";
 import { approvalSignal, cancelSignal, runIdFor, stateQuery, type PipelineInput } from "./workflow.js";
 
@@ -119,6 +120,8 @@ export interface FactoryOptions {
   host: HostConfig;
   apiToken: string;
   port: number;
+  /** Skill loading: `root` is the app root (default: the current directory); see LoadSkillsOptions. */
+  skills?: Partial<LoadSkillsOptions>;
 }
 
 /** Validate the registry, then run the Temporal worker and the HTTP API in one process. */
@@ -127,13 +130,15 @@ export async function startFactory(o: FactoryOptions): Promise<{ server: Server;
   if (problems.length) throw new Error(`registry is not consistent:\n- ${problems.join("\n- ")}`);
   if (o.host.token.length < 32) throw new Error("FACTORY_CALLBACK_TOKEN must be at least 32 characters");
   if (!o.apiToken) throw new Error("FACTORY_API_TOKEN is empty");
+  const loaded = await loadSkills(o.registry, { root: process.cwd(), ...o.skills });
+  for (const w of loaded.warnings) console.warn(`[factory] ${w}`);
 
   const worker = await Worker.create({
     connection: await NativeConnection.connect({ address: o.temporal.address }),
     namespace: o.temporal.namespace,
     taskQueue: o.temporal.taskQueue,
     workflowsPath: o.workflowsPath,
-    activities: makeActivities(o.registry, o.host),
+    activities: makeActivities(o.registry, o.host, { skills: loaded.skills }),
   });
   const client = new Client({ connection: await Connection.connect({ address: o.temporal.address }), namespace: o.temporal.namespace });
   const server = createServer(createApi({ client, registry: o.registry, taskQueue: o.temporal.taskQueue, token: o.apiToken }));

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { makeActivities } from "../src/activities";
+import { createRegistry } from "../src/registry";
 import { registry } from "./fixtures/registry";
+import type { LoadedSkill } from "../src/types";
 
 const ctx = { runId: "run-C-1", pipeline: "ticket", pipelineVersion: 1, channelId: "C", threadTs: "1", starter: "U1", request: "x" };
 const host = { url: "https://host.test", token: "t".repeat(32) };
@@ -39,5 +41,38 @@ describe("activities", () => {
   test("a non-2xx answer throws so Temporal retries", async () => {
     const r = recorder(503);
     await expect(makeActivities(registry, host, { fetch: r.fetch }).finish({ runId: "run-C-1", reason: "done" })).rejects.toThrow("503");
+  });
+  describe("skills and model", () => {
+    const skill: LoadedSkill = { name: "tdd", description: "write tests first", hash: "h", files: [{ path: "SKILL.md", content: "RED GREEN REFACTOR" }, { path: "eval.md", content: "CHECK" }] };
+    const withSkills = () => {
+      const r = createRegistry();
+      r.stage({ name: "build", runsIn: "sandbox", skills: ["tdd"], model: "fast-model", next: () => ({ finish: "done" }) });
+      r.stage({ name: "plain", runsIn: "host", next: () => ({ finish: "done" }) });
+      r.prompt("build", () => "BUILD IT");
+      r.prompt("plain", () => "JUST PLAIN");
+      return r;
+    };
+
+    test("a stage with skills posts the skill text before the prompt, and its model", async () => {
+      const r = recorder();
+      await makeActivities(withSkills(), host, { fetch: r.fetch, skills: new Map([["tdd", skill]]) }).runStage({ ctx, stage: "build", attempt: 1, requestId: "q" });
+      const { prompt, model } = r.seen[0]!.body;
+      expect(model).toBe("fast-model");
+      expect(prompt.endsWith("\n\nBUILD IT")).toBe(true);
+      expect(prompt.indexOf("### tdd/SKILL.md")).toBeLessThan(prompt.indexOf("### tdd/eval.md"));
+      expect(prompt).toContain("RED GREEN REFACTOR");
+    });
+
+    test("a stage without skills or model posts exactly what it did before", async () => {
+      const r = recorder();
+      await makeActivities(withSkills(), host, { fetch: r.fetch }).runStage({ ctx, stage: "plain", attempt: 1, requestId: "q" });
+      expect(r.seen[0]!.body).toEqual({ runId: "run-C-1", stage: "plain", attempt: 1, prompt: "JUST PLAIN", requestId: "q" });
+    });
+
+    test("skills that were not loaded fail without a retry and post nothing", async () => {
+      const r = recorder();
+      await expect(makeActivities(withSkills(), host, { fetch: r.fetch }).runStage({ ctx, stage: "build", attempt: 1, requestId: "q" })).rejects.toMatchObject({ nonRetryable: true });
+      expect(r.seen).toEqual([]);
+    });
   });
 });

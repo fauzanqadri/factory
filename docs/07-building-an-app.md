@@ -12,6 +12,8 @@ my-app/
     registry.ts     stages, pipelines (static code only)
     prompts.ts      registry.prompt(...) for each stage
     hooks.ts        registry.on(...) event hooks (tracker, chat, metrics)
+  skills/           skill folders (SKILL.md and what it references), or npm packages
+  skills.lock.json  content hashes of the skills; the worker refuses to start on a mismatch
     workflows.ts    export const pipelineWorkflow = makePipelineWorkflow(registry)
     main.ts         startFactory({ registry, workflowsPath, ... })
   test/
@@ -46,7 +48,7 @@ my-app/
      port: Number(env("PORT") || 8080),
    });
    ```
-   `startFactory` runs `registry.validate()` and refuses to start on any problem, or when the callback token is shorter than 32 characters or the API token is empty. It then starts the Temporal worker and the HTTP API in one process. The dashboard will mount on the same port once built.
+   `startFactory` runs `registry.validate()`, loads and checks the skills ([02](02-registry.md#skills-and-model); the app root defaults to the working directory, override with `skills: { root }`), and refuses to start on any problem, or when the callback token is shorter than 32 characters or the API token is empty. It then starts the Temporal worker and the HTTP API in one process. The dashboard will mount on the same port once built.
 5. **Test the app's paths** with `@temporalio/testing` (time skipping). For each pipeline, approve, reject and time out each stage, and check the finish reason.
 
 ## Configuration (env only, one image for every environment)
@@ -64,6 +66,7 @@ my-app/
 | Change | How |
 |---|---|
 | Prompt wording | Edit the prompt and deploy. Running runs pick it up on their next stage |
+| A skill's text, or which skills a stage uses | Update the skill (and `skills.lock.json`) and deploy. No new pipeline version; running runs pick it up on their next stage turn |
 | Event hooks | Add, change or remove handlers and deploy. No new pipeline version |
 | A `skip` rule | A decision hook: register a new pipeline version |
 | A new stage, a different order, different `next` logic | Register the stage, then a new pipeline version. New runs use it; running runs finish on their old version |

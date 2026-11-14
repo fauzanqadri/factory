@@ -7,9 +7,10 @@ An app describes its work by registering stages, pipelines and prompts. The work
 ```ts
 const registry = createRegistry();
 
-registry.stage({ name, runsIn, remindAfter?, gateTimeout?, next });
+registry.stage({ name, runsIn, remindAfter?, gateTimeout?, skills?, model?, next });
 registry.pipeline({ name, version, stages, defaults: { remindAfter, gateTimeout } });
 registry.prompt(stageName, (input) => string);
+registry.skill(name, { path } | { package }, { include? });  // skills (below)
 registry.on(event, options?, handler);  // event hooks (below)
 
 registry.getStage(name);
@@ -19,12 +20,12 @@ registry.validate();                    // [] when every pipeline stage exists a
 ```
 
 Registration throws on:
-- a duplicate stage or prompt;
+- a duplicate stage, prompt or skill name, or a skill source that is not exactly one of `path` and `package`;
 - a pipeline with no stages;
 - a version that is not a positive integer;
 - a `name@version` registered twice.
 
-`validate()` lists every pipeline stage that is unregistered or has no prompt, and every hook whose `stage` or `pipeline` filter names something unregistered. A worker should refuse to start when it returns anything.
+`validate()` lists every pipeline stage that is unregistered or has no prompt, and every stage whose `skills` names an unregistered skill, and every hook whose `stage` or `pipeline` filter names something unregistered. A worker should refuse to start when it returns anything.
 
 ## Example: three pipelines from one set of stages
 
@@ -106,3 +107,32 @@ registry.stage({
 ## Prompts live outside the workflow
 
 The workflow sends only `{ stage, attempt, note }` to the activity that starts a turn. That activity calls `registry.getPrompt(stage)` and builds the text from the run's facts. Prompt wording changes often, and activities may change between deploys without affecting replay. Changing a prompt therefore needs no new pipeline version.
+
+## Skills and model
+
+A skill is a folder with a `SKILL.md` (the format agent skills use) that the app owns, so factory, not the chat host, guarantees it is there. Register it once and attach it to stages by name:
+
+```ts
+registry.skill("no-ai-slop", { path: "skills/no-ai-slop" });          // a folder under the app root
+registry.skill("tdd", { package: "@acme/skill-tdd" });                // an npm package; its folder is package.json's "skill" field (default "skill/")
+registry.stage({ name: "review", runsIn: "sandbox", skills: ["no-ai-slop"], model: "fast-model", next: ... });
+```
+
+`startFactory()` loads every skill before it starts (`loadSkills`, `src/skills.ts`), and the turn activity prepends the text of a stage's skills to its prompt. No host support is needed: it is part of the `prompt` string.
+
+**What loads.** Only files reachable from `SKILL.md`:
+- a relative Markdown link (`[Mocking](./references/mocking.md)`) resolves against the file that contains it, so children of children load;
+- a bare name in prose or backticks (`eval.md`) resolves against the skill root, then the referencing file's folder, and counts only when that file exists;
+- `.md` and `.txt` only. `evals/`, `agents/openai.yaml` and anything nothing mentions are never read;
+- `include: [...]` in the options loads a file nothing mentions.
+
+**What fails worker start:** a link or bare name that leaves the skill folder (including `%2e%2e` and absolute paths), a symlink anywhere on the way, a file that is not a regular file, a missing `SKILL.md` or a frontmatter `name` that differs from the registered name, and any limit exceeded (depth 5, 40 files, 64 KB a file, 200 KB a skill, 400 KB per stage; override with `skills: { limits }`). Hidden files, URLs, non-text targets and missing children are skipped, and missing or ambiguous ones are logged as warnings, as are mentions of other skills (`owner/repo@name`) that are not registered here.
+
+**Lockfile.** If `skills.lock.json` exists at the app root (`writeLock` writes it), each skill's content hash must match it, or the worker refuses to start; `skills: { lock: "warn" | "off" }` relaxes that. Review the diff when a vendored skill changes: skill text is instructions to the agent, and the hash is the defense against a changed one.
+
+**`model` is advisory.** It is sent to the chat host as an optional `model` field of the turn request. factory cannot make a host use it; until the host reads the field it has no effect, and a model the host does not know is the host's to reject or ignore.
+
+Skills are read in the activity, not the workflow, so editing one does not need a new pipeline version. A skill changed by a deploy reaches a running run on its next stage turn.
+
+Keep `registry.ts` free of `node:*` imports: it is bundled into the workflow, so it only records the declarations, and `src/skills.ts` (worker side) does the reading.
+

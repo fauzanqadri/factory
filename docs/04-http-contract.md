@@ -24,7 +24,7 @@ Bearer: `FACTORY_CALLBACK_TOKEN`, at least 32 characters. The host should mount 
 
 | Call | Body | Host must |
 |---|---|---|
-| `POST {host}/workflow/v1/turns` | `{ runId, stage, attempt, prompt, requestId }` | Inject `prompt` as a turn in the run's thread, record `stage`, and return `200`. A repeated `requestId` returns `200` without a second turn |
+| `POST {host}/workflow/v1/turns` | `{ runId, stage, attempt, prompt, requestId, model? }` | Inject `prompt` as a turn in the run's thread, record `stage`, and return `200`. A repeated `requestId` returns `200` without a second turn. `prompt` already includes the text of the stage's skills ([02](02-registry.md#skills-and-model)). `model` is optional and advisory: use it if the host can pick a model per turn, ignore it otherwise |
 | `POST {host}/workflow/v1/runs/:runId/remind` | `{ stage, waitingSince }` | Post a short nudge in the thread |
 | `POST {host}/workflow/v1/runs/:runId/finish` | `{ reason }` | Post a closing line, mark the run finished |
 

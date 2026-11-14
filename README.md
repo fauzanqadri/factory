@@ -10,7 +10,7 @@ An app built on factory registers its stages and pipelines in a registry. The fr
 
 The chat host (the reference is [slaude](https://github.com/barockok/slaude)) runs the agent turns and shows the approval cards.
 
-Status: the registry, hooks, the pipeline workflow, its activities, the HTTP API and `startFactory()` are implemented and tested (26 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
+Status: the registry, hooks, the pipeline workflow, its activities, the HTTP API and `startFactory()` are implemented and tested (49 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
 
 ## Why
 
@@ -45,6 +45,7 @@ The framework never talks to the sandbox. The chat host is the only part that ta
 | Run | One execution of the pipeline workflow for one chat thread |
 | Starter / participant | The person who started the run, and the people they added. Only they may approve |
 | Gate | The wait after a stage for an approval signal, with a reminder timer and a give-up timer |
+| Skill | A folder of instructions (`SKILL.md` plus the files it references) the app owns and attaches to stages; its text is prepended to the stage prompt |
 | Hook | Event hooks (`registry.on("stage.approved", handler)`) for side effects at fixed points; decision hooks (`skip`, `next`) for the path |
 
 ## An app in a few lines

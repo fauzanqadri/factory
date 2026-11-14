@@ -1,6 +1,8 @@
+import { ApplicationFailure } from "@temporalio/common";
 import { dispatchEvent } from "./hooks.js";
 import type { Registry } from "./registry.js";
-import type { FinishReason, HookEvent, RunContext, StageName } from "./types.js";
+import { renderSkills } from "./skills.js";
+import type { FinishReason, HookEvent, LoadedSkill, RunContext, StageName } from "./types.js";
 
 export interface HostConfig {
   /** Chat host base URL, e.g. https://host.example (callbacks go to /workflow/v1/...). */
@@ -26,7 +28,7 @@ export interface FactoryActivities {
 export function makeActivities(
   registry: Registry,
   host: HostConfig,
-  deps: { fetch?: typeof fetch; log?: (msg: string) => void } = {},
+  deps: { fetch?: typeof fetch; log?: (msg: string) => void; skills?: Map<string, LoadedSkill> } = {},
 ): FactoryActivities {
   const doFetch = deps.fetch ?? fetch;
   const log = deps.log ?? ((m: string) => console.warn(m));
@@ -44,8 +46,18 @@ export function makeActivities(
 
   return {
     async runStage({ ctx, stage, attempt, note, requestId }) {
-      const prompt = registry.getPrompt(stage)({ ...ctx, stage, attempt, note });
-      await post("/workflow/v1/turns", { runId: ctx.runId, stage, attempt, prompt, requestId });
+      const def = registry.getStage(stage);
+      let prompt = registry.getPrompt(stage)({ ...ctx, stage, attempt, note });
+      if (def.skills?.length) {
+        const loaded = def.skills.map((name) => {
+          const s = deps.skills?.get(name);
+          // A setup mistake (skills not loaded), not a transient failure: don't let Temporal retry it.
+          if (!s) throw ApplicationFailure.nonRetryable(`stage "${stage}" uses skill "${name}" but it was not loaded (use startFactory, or pass skills to makeActivities)`);
+          return s;
+        });
+        prompt = `${renderSkills(loaded)}\n\n${prompt}`;
+      }
+      await post("/workflow/v1/turns", { runId: ctx.runId, stage, attempt, prompt, requestId, ...(def.model ? { model: def.model } : {}) });
     },
     async emit(event) {
       await dispatchEvent(registry, event, log);

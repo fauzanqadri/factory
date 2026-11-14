@@ -46,6 +46,13 @@ export interface StageDef {
   /** Overrides the pipeline default for this stage's gate. */
   remindAfter?: Duration;
   gateTimeout?: Duration;
+  /** Names of skills (registered with `registry.skill`) whose text is prepended to this stage's prompt. */
+  skills?: string[];
+  /**
+   * Model the stage should run on. Sent to the chat host as an optional `model` field in the
+   * turn request; advisory until the host reads it (factory cannot enforce it).
+   */
+  model?: string;
   /**
    * Decision hook: true passes straight through this stage (no turn, no gate) to
    * what `next` returns for an automatic approval. Runs inside the workflow:
@@ -103,6 +110,29 @@ export interface RegisteredHook {
   event: HookEventName;
   options: Required<Pick<HookOptions, "mode">> & Omit<HookOptions, "mode">;
   handler: HookHandler;
+}
+
+/** Where a skill folder comes from: a path under the app root, or an npm package that ships one. */
+export type SkillSource = { path: string } | { package: string };
+
+export interface SkillOptions {
+  /** Extra files (relative to the skill folder) to load although nothing references them. */
+  include?: string[];
+}
+
+export interface SkillDecl {
+  name: string;
+  source: SkillSource;
+  options: SkillOptions;
+}
+
+/** A skill after loading: SKILL.md first, then every file reachable from it. */
+export interface LoadedSkill {
+  name: string;
+  description: string;
+  /** sha256 over the sorted (path, content) pairs. */
+  hash: string;
+  files: Array<{ path: string; content: string }>;
 }
 
 export interface PipelineDef {

@@ -1,7 +1,13 @@
-import type { HookEventName, HookHandler, HookOptions, PipelineDef, PromptFn, RegisteredHook, StageDef, StageName } from "./types.js";
+import type { HookEventName, HookHandler, HookOptions, PipelineDef, PromptFn, RegisteredHook, SkillDecl, SkillOptions, SkillSource, StageDef, StageName } from "./types.js";
 
+// This module is bundled into Temporal's workflow sandbox: no node:* imports here.
+// Skill files are read by ./skills.js, which only the worker side imports.
 export interface Registry {
   stage(def: StageDef): void;
+  /** Declare a skill folder. Files are read (and checked) at worker start by `loadSkills`. */
+  skill(name: string, source: SkillSource, options?: SkillOptions): void;
+  getSkillDecls(): SkillDecl[];
+  getStages(): StageDef[];
   pipeline(def: PipelineDef): void;
   prompt(stage: StageName, fn: PromptFn): void;
   /** Register an event hook. Handlers run in registration order, in the emit activity. */
@@ -26,6 +32,7 @@ export function createRegistry(): Registry {
   const pipelines = new Map<string, PipelineDef>();
   const prompts = new Map<StageName, PromptFn>();
   const hooks: RegisteredHook[] = [];
+  const skills = new Map<string, SkillDecl>();
   const list = (v: string | string[] | undefined) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
   const key = (name: string, version: number) => `${name}@${version}`;
 
@@ -33,6 +40,20 @@ export function createRegistry(): Registry {
     stage(def) {
       if (stages.has(def.name)) throw new Error(`stage "${def.name}" is already registered`);
       stages.set(def.name, def);
+    },
+    skill(name, source, options = {}) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error(`skill name "${name}" must be letters, digits, ".", "_" or "-"`);
+      if (skills.has(name)) throw new Error(`skill "${name}" is already registered`);
+      const hasPath = "path" in source && typeof source.path === "string" && source.path !== "";
+      const hasPkg = "package" in source && typeof source.package === "string" && source.package !== "";
+      if (hasPath === hasPkg) throw new Error(`skill "${name}": give exactly one of path or package`);
+      skills.set(name, { name, source, options });
+    },
+    getSkillDecls() {
+      return [...skills.values()];
+    },
+    getStages() {
+      return [...stages.values()];
     },
     pipeline(def) {
       if (!Number.isInteger(def.version) || def.version < 1) throw new Error(`pipeline "${def.name}": version must be a positive integer`);
@@ -83,6 +104,9 @@ export function createRegistry(): Registry {
     },
     validate() {
       const problems: string[] = [];
+      for (const s of stages.values()) {
+        for (const k of s.skills ?? []) if (!skills.has(k)) problems.push(`stage "${s.name}" uses unregistered skill "${k}"`);
+      }
       for (const p of pipelines.values()) {
         for (const s of p.stages) {
           if (!stages.has(s)) problems.push(`pipeline "${key(p.name, p.version)}" uses unregistered stage "${s}"`);
