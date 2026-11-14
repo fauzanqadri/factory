@@ -86,6 +86,7 @@ registry.on("stage.approved", async (e) => tracker.addLabel(e.ticketRef, `approv
 | [05-chat-host.md](docs/05-chat-host.md) | What a chat host must provide (starter, participants, approval cards, turn injection) and how slaude does it |
 | [06-dashboard.md](docs/06-dashboard.md) | The monitoring page |
 | [07-building-an-app.md](docs/07-building-an-app.md) | How an app repo uses the framework, from registry to running worker |
+| [08-status-and-notes.md](docs/08-status-and-notes.md) | Where the work stopped: unpublished branches, the loop fix, and the Claude Code decision |
 
 ## Repo layout
 
