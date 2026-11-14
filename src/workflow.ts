@@ -46,6 +46,7 @@ export function makePipelineWorkflow(registry: Registry) {
       request: input.request,
     };
     const state: RunState = { stage: pipeline.stages[0], attempt: 0, status: "running", history: [] };
+    const attempts = new Map<StageName, number>();
     const seenGates = new Set<string>();
     const inbox: Approval[] = [];
     let cancelled = false;
@@ -76,7 +77,11 @@ export function makePipelineWorkflow(registry: Registry) {
       const remindMs = msToNumber(def.remindAfter ?? p.defaults.remindAfter);
       const timeoutMs = msToNumber(def.gateTimeout ?? p.defaults.gateTimeout);
       let note: string | undefined;
-      for (let attempt = 1; ; attempt++) {
+      for (;;) {
+        // Counted across the whole run, so a loop back to this stage is a new attempt, not attempt 1
+        // again: requestId and eventId stay unique, and a card from an earlier visit goes stale.
+        const attempt = (attempts.get(def.name) ?? 0) + 1;
+        attempts.set(def.name, attempt);
         state.stage = def.name;
         state.attempt = attempt;
         state.waitingSince = undefined;

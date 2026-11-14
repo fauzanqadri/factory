@@ -36,7 +36,7 @@ export function makePipelineWorkflow(registry: Registry) {
 
 `runStageAndWait` repeats for one stage until it is approved, or until the run is cancelled or times out:
 
-1. `emit("stage.started")`, then activity `runStage({ runId, stage, attempt, note })`. It builds the prompt and calls the chat host's turn endpoint with `requestId = <runId>:<stage>:<attempt>`. It retries with backoff. The host ignores a repeated `requestId`, so a retry never runs the turn twice.
+1. `emit("stage.started")`, then activity `runStage({ runId, stage, attempt, note })`. It builds the prompt and calls the chat host's turn endpoint with `requestId = <runId>:<stage>:<attempt>`. It retries with backoff. The host ignores a repeated `requestId`, so a retry never runs the turn twice. `attempt` counts a stage's turns across the whole run, so when `next` loops back to an earlier stage the revisit is attempt N+1, not attempt 1 again: `requestId` and `eventId` stay unique, and a card from the earlier visit is stale.
 2. Wait for an `approval` signal for this stage, a `cancel` signal, or a timer:
    - **approve:** `emit("stage.approved")`, the stage is done, and `next` picks what follows;
    - **reject:** `emit("stage.rejected")`, then the same stage runs again as attempt N+1, with the rejection note in the prompt;
