@@ -234,3 +234,43 @@ describe("frontmatter", () => {
     expect(parseFrontmatter("no frontmatter")).toEqual({});
   });
 });
+
+describe("personas and templates", () => {
+  test("load as single files (path or package + path), hash their content, and go into the lockfile", async () => {
+    const root = await app({
+      "personas/soul.md": "# SOUL\nYou are calm and exact.",
+      "node_modules/@acme/method/package.json": JSON.stringify({ name: "@acme/method", version: "1.0.0" }),
+      "node_modules/@acme/method/templates/brief.md": "## Problem *(mandatory)*\n",
+      "node_modules/@acme/method/skills/rules/SKILL.md": skillMd("rules", "Always write tests."),
+    });
+    const r = createRegistry();
+    r.persona("calm", { path: "personas/soul.md" });
+    r.template("brief", { package: "@acme/method", path: "templates/brief.md" });
+    r.skill("rules", { package: "@acme/method", path: "skills/rules" });
+    const loaded = await loadSkills(r, { root });
+    expect(loaded.texts.get("persona:calm")).toMatchObject({ kind: "persona", name: "calm", content: "# SOUL\nYou are calm and exact." });
+    expect(loaded.texts.get("template:brief")!.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(loaded.skills.get("rules")!.files[0]!.content).toContain("Always write tests.");
+
+    const lockPath = path.join(root, "skills.lock.json");
+    await writeLock(r, loaded, lockPath);
+    const lock = JSON.parse(await readFile(lockPath, "utf8"));
+    expect(Object.keys(lock)).toEqual(["skills", "personas", "templates"]);
+    await writeFile(path.join(root, "personas/soul.md"), "# SOUL\nYou are loud.");
+    await expect(loadSkills(r, { root })).rejects.toThrow(/persona "calm" changed since it was locked/);
+  });
+
+  test("a persona outside the app root, a symlink, or a missing file fails", async () => {
+    const root = await app({ "personas/a.md": "A" });
+    const outside = createRegistry();
+    outside.persona("x", { path: "../elsewhere.md" });
+    await expect(loadSkills(outside, { root })).rejects.toThrow(/leaves/);
+    await symlink(path.join(root, "personas/a.md"), path.join(root, "personas/link.md"));
+    const linked = createRegistry();
+    linked.persona("x", { path: "personas/link.md" });
+    await expect(loadSkills(linked, { root })).rejects.toThrow(/symlink/);
+    const missing = createRegistry();
+    missing.template("t", { path: "templates/none.md" });
+    await expect(loadSkills(missing, { root })).rejects.toThrow(/does not exist/);
+  });
+});

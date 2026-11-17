@@ -65,10 +65,37 @@ describe("registry", () => {
     expect(r.getSkillDecls().map((d) => d.name)).toEqual(["tdd"]);
     expect(() => r.skill("tdd", { path: "x" })).toThrow("already registered");
     expect(() => r.skill("bad name", { path: "x" })).toThrow("must be");
-    expect(() => r.skill("p", { path: "" })).toThrow("exactly one");
-    expect(() => r.skill("p", { path: "a", package: "b" } as never)).toThrow("exactly one");
+    expect(() => r.skill("p", { path: "" })).toThrow("give a path, or a package");
+    expect(() => r.skill("p", { package: "" })).toThrow("give a path, or a package");
+    r.skill("from-pkg", { package: "@acme/skills", path: "tdd" }); // a folder inside a package
+    expect(r.getSkillDecls().map((d) => d.name)).toEqual(["tdd", "from-pkg"]);
     const withSkills = createRegistry();
     withSkills.stage({ name: "a", runsIn: "host", skills: ["missing"], next: () => ({ finish: "done" }) });
     expect(withSkills.validate()).toContain('stage "a" uses unregistered skill "missing"');
+  });
+
+  test("personas and templates: one file each, by name; validate() checks stages, reads and outcomes", () => {
+    const r = createRegistry();
+    r.persona("analyst", { path: "personas/analyst.md" });
+    r.template("brief", { package: "@acme/method", path: "templates/brief.md" });
+    expect(r.getTextDecls()).toEqual([
+      { kind: "persona", name: "analyst", source: { path: "personas/analyst.md" } },
+      { kind: "template", name: "brief", source: { package: "@acme/method", path: "templates/brief.md" } },
+    ]);
+    expect(() => r.persona("analyst", { path: "x.md" })).toThrow("already registered");
+    expect(() => r.template("t", { package: "@acme/method" })).toThrow("path of the file");
+    expect(() => r.stage({ name: "x", runsIn: "host", clarify: { max: -1 }, next: () => "y" })).toThrow("clarify.max");
+
+    r.stage({ name: "analyst", runsIn: "host", persona: "analyst", produces: { artifact: "brief", template: "brief" }, next: () => "pm" });
+    r.stage({ name: "pm", runsIn: "host", persona: "pm", reads: ["brief", "nothing"], outcomes: [], checklist: ["x"], produces: { artifact: "prd", template: "prd" }, next: () => ({ finish: "done" }) });
+    for (const s of ["analyst", "pm"]) r.prompt(s, () => s);
+    r.pipeline({ name: "plan", version: 1, stages: ["analyst", "pm"], skills: ["rules"], defaults });
+    expect(r.validate()).toEqual([
+      'stage "pm" uses unregistered persona "pm"',
+      'stage "pm" uses unregistered template "prd"',
+      'stage "pm" declares an empty outcomes list (omit it to allow any outcome)',
+      'pipeline "plan@1" uses unregistered skill "rules" as a project rule',
+      'stage "pm" (pipeline "plan@1") reads "nothing", which no stage of the pipeline produces',
+    ]);
   });
 });

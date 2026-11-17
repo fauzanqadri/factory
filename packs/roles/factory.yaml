@@ -1,0 +1,101 @@
+# The roles pack: a role-based method that turns a request into shipped, reviewed stories.
+#
+#   analyst -> pm -> architect -> story -> dev -> qa
+#                                  ^                |
+#                                  +-- pass/concerns+   fail -> dev
+#
+# Each stage writes one artifact from a template, a person approves it at the gate, and the
+# approved artifact is committed to the repo and handed to the stages that read it.
+# Copy this folder to start your own method, or layer an overlay folder on it (docs/09).
+name: roles
+description: Role-based delivery. A brief, a PRD and an architecture, then one story at a time through dev and QA.
+pin: record
+
+pipelines:
+  - name: roles
+    version: 1
+    stages: [analyst, pm, architect, story, dev, qa]
+    defaults: { remindAfter: 24h, gateTimeout: 7d }
+
+stages:
+  analyst:
+    runsIn: host
+    persona: analyst
+    effort: high
+    produces: { artifact: brief, template: brief, commit: "docs/factory/{runId}/brief.md" }
+    checklist:
+      - The problem is stated without proposing a solution
+      - Every goal can be observed or measured
+      - Scope says what is out as well as what is in
+      - Every assumption is written down
+    next: pm
+
+  pm:
+    runsIn: host
+    persona: pm
+    effort: high
+    reads: [brief]
+    produces: { artifact: prd, template: prd, commit: "docs/factory/{runId}/prd.md" }
+    checklist:
+      - Every functional requirement has an ID (FR-001, FR-002, ...) and can be tested
+      - Every story has acceptance criteria written as Given / When / Then
+      - No requirement names a technology, library or code structure
+      - Stories are ordered so each one can ship on its own
+      - Every goal in the brief is covered by at least one requirement
+    next: architect
+
+  architect:
+    runsIn: host
+    persona: architect
+    effort: high
+    reads: [brief, prd]
+    produces: { artifact: architecture, template: architecture, commit: "docs/factory/{runId}/architecture.md" }
+    checklist:
+      - Every functional requirement maps to a component
+      - Every decision records the options considered and why this one won
+      - Every interface between components names its inputs, outputs and errors
+      - Every risk has a mitigation or is explicitly accepted
+    next: story
+
+  story:
+    runsIn: host
+    persona: scrum-master
+    reads: [prd, architecture, story, qa-gate]
+    produces: { artifact: story, template: story, commit: "docs/factory/{runId}/stories/{seq}.md" }
+    checklist:
+      - The story is the first one in PRD order that is not done
+      - Acceptance criteria are copied from the PRD word for word
+      - Every task maps to at least one acceptance criterion
+      - "Dev notes quote the architecture they rely on, each with a [Source: <artifact>#<section>] reference"
+      - Progress lists every PRD story with its status
+    next:
+      ready: dev
+      none-left: { finish: done }
+
+  dev:
+    runsIn: sandbox
+    persona: dev
+    effort: xhigh
+    reads: [story, qa-gate]
+    produces: { artifact: dev-record, template: dev-record, commit: "docs/factory/{runId}/dev-records/{seq}.md" }
+    checklist:
+      - Every task in the story is done, or listed as not done with the reason
+      - Every acceptance criterion has a test, and the tests pass
+      - The full test suite passes, not only the new tests
+      - Only files the story needs were changed, and every one is listed
+      - The code is committed
+    next: qa
+
+  qa:
+    runsIn: sandbox
+    persona: qa
+    reads: [story, dev-record, architecture]
+    produces: { artifact: qa-gate, template: qa-gate, commit: "docs/factory/{runId}/qa-gates/{seq}.md" }
+    checklist:
+      - Every acceptance criterion was checked against a test or the running code
+      - Every finding has a severity and a file reference
+      - The verdict follows from the findings
+    next:
+      pass: story
+      concerns: story
+      fail: dev

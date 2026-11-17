@@ -1,13 +1,14 @@
 {
   "name": "@fauzanqadri/factory",
   "version": "0.0.1",
-  "description": "Stage pipelines with human approval gates, on Temporal, driven from a chat thread",
+  "description": "Stage pipelines with human approval gates and spec-driven artifacts, on Temporal, driven from a chat thread",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
     "docs",
+    "packs",
     "README.md",
     "LICENSE"
   ],
@@ -32,7 +33,8 @@
     "@temporalio/client": "^1.24.0",
     "@temporalio/common": "^1.24.0",
     "@temporalio/worker": "^1.24.0",
-    "@temporalio/workflow": "^1.24.0"
+    "@temporalio/workflow": "^1.24.0",
+    "yaml": "^2.9.1"
   },
   "exports": {
     ".": {

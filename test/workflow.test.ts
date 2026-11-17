@@ -2,10 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { Worker } from "@temporalio/worker";
 import { fileURLToPath } from "node:url";
-import type { FactoryActivities } from "../src/activities";
-import { approvalSignal, cancelSignal, stateQuery, type PipelineInput, type PipelineResult } from "../src/workflow";
+import type { FactoryActivities, RunStageInput } from "../src/activities";
+import { loadPack, rolesPack } from "../src/server";
+import { approvalSignal, artifactSignal, cancelSignal, stateQuery, type PipelineInput, type PipelineResult } from "../src/workflow";
 import { registry } from "./fixtures/registry";
-import type { Approval, HookEvent, RunState } from "../src/types";
+import type { Approval, ArtifactCandidate, HookEvent, RunState } from "../src/types";
 
 let env: TestWorkflowEnvironment;
 let worker: Worker;
@@ -15,10 +16,15 @@ const events: HookEvent[] = [];
 const queue = "test";
 
 const activities: FactoryActivities = {
-  async runStage(i) { calls.push({ kind: "runStage", stage: i.stage, attempt: i.attempt, note: i.note, requestId: i.requestId, prompt: registry.getPrompt(i.stage)({ ...i.ctx, stage: i.stage, attempt: i.attempt, note: i.note }) }); },
+  async runStage(i) {
+    const prompt = i.spec ? `pack:${i.stage}` : registry.getPrompt(i.stage)({ ...i.ctx, stage: i.stage, attempt: i.attempt, note: i.note });
+    calls.push({ kind: "runStage", stage: i.stage, attempt: i.attempt, note: i.note, requestId: i.requestId, prompt, input: i });
+    return { promptHash: `h-${i.stage}-${i.attempt}`, skills: {} };
+  },
   async emit(e) { events.push(e); },
   async remind(i) { calls.push({ kind: "remind", stage: i.stage }); },
   async finish(i) { calls.push({ kind: "finish", reason: i.reason }); },
+  async commit(i) { calls.push({ kind: "commit", path: i.path, requestId: i.requestId }); return { sha: `sha-${i.path}` }; },
 };
 
 beforeAll(async () => {
@@ -164,5 +170,109 @@ describe("pipeline workflow", () => {
     await h.signal(cancelSignal, { by: "U1" });
     expect(((await h.result()) as PipelineResult).finish).toBe("cancelled");
     expect(events.at(-1)?.name).toBe("run.finished");
+  });
+});
+
+let gate = 0;
+const decide = (h: Handle, stage: string, attempt: number, decision: Approval["decision"] = "approve", extra: Partial<Approval> = {}) =>
+  h.signal(approvalSignal, { gateId: `g${++gate}`, stage, attempt, decision, by: "U2", ...extra });
+const submit = (h: Handle, stage: string, attempt: number, artifact: string, content: string, extra: Partial<ArtifactCandidate> = {}) =>
+  h.signal(artifactSignal, { stage, attempt, artifact, content, hash: `hash-${content}`, checklist: [], questions: [], ...extra });
+const turnsOf = (stage: string) => calls.filter((c) => c.kind === "runStage" && c.stage === stage).map((c) => c.input as RunStageInput);
+
+describe("method layer", () => {
+  test("an approve before any artifact is ignored; the approved artifact is frozen, committed and handed to the next stage", async () => {
+    const h = await start({ pipeline: "spec" });
+    await waitingAt(h, "specify");
+    await decide(h, "specify", 1); // nothing submitted yet: dropped
+    await submit(h, "specify", 1, "spec", "first draft");
+    await submit(h, "specify", 1, "spec", "S1"); // a resubmission in the same turn replaces it
+    await submit(h, "specify", 7, "spec", "stale"); // not the current attempt: ignored
+    let s = await h.query(stateQuery);
+    expect(s.stage).toBe("specify");
+    expect(s.history).toEqual([]);
+    expect(s.candidate?.content).toBe("S1");
+    expect(s.contract).toMatchObject({ artifact: "spec", template: "spec", fromRegistry: true });
+    await decide(h, "specify", 1);
+    s = await waitingAt(h, "plan");
+    const path = `docs/${h.workflowId}/spec-1.md`;
+    expect(s.artifacts!.map((v) => [v.artifact, v.seq, v.content, v.approvedBy, v.commit])).toEqual([["spec", 1, "S1", "U2", { path, sha: `sha-${path}` }]]);
+    expect(calls.find((c) => c.kind === "commit")).toMatchObject({ path, requestId: `${h.workflowId}:commit:spec:1` });
+    expect(turnsOf("plan")[0]!.inputs!.map((v) => v.content)).toEqual(["S1"]);
+    expect(events.find((e) => e.name === "stage.approved" && e.stage === "specify")?.artifact?.seq).toBe(1);
+    expect(s.turns!.map((t) => `${t.stage}#${t.attempt}:${t.promptHash}`)).toEqual(["specify#1:h-specify-1", "plan#1:h-plan-1"]);
+
+    await submit(h, "plan", 1, "plan", "P1", { outcome: "ok" });
+    await decide(h, "plan", 1);
+    const res = (await h.result()) as PipelineResult;
+    expect(res.finish).toBe("done:1"); // next() received the approved artifacts
+    expect(res.state.history.at(-1)).toMatchObject({ stage: "plan", decision: "approve", outcome: "ok" }); // the artifact's outcome
+  });
+
+  test("open questions block approval; an answer records the clarification and reruns the stage", async () => {
+    const h = await start({ pipeline: "spec" });
+    await waitingAt(h, "specify");
+    await submit(h, "specify", 1, "spec", "S?", { questions: ["Which cards?"] });
+    await decide(h, "specify", 1); // a question is open: dropped
+    await decide(h, "specify", 1, "answer", { answers: ["Visa only"] });
+    const s = await waitingAt(h, "specify", 2);
+    expect(s.clarifications).toEqual([{ stage: "specify", attempt: 1, question: "Which cards?", answer: "Visa only", by: "U2" }]);
+    expect(turnsOf("specify")[1]!.clarifications).toEqual(s.clarifications);
+    expect(events.some((e) => e.name === "stage.clarified" && e.stage === "specify")).toBe(true);
+    expect(s.history.map((x) => x.decision)).toEqual(["answer"]);
+    await h.signal(cancelSignal, { by: "U1" });
+    expect(((await h.result()) as PipelineResult).finish).toBe("cancelled");
+  });
+
+  test("every rejection, and the reason the run was sent back, reach the stage's next prompt", async () => {
+    const h = await start({ pipeline: "spec" });
+    await waitingAt(h, "specify");
+    await submit(h, "specify", 1, "spec", "S1");
+    await decide(h, "specify", 1);
+    await waitingAt(h, "plan");
+    await decide(h, "plan", 1, "reject", { note: "too vague" });
+    await waitingAt(h, "plan", 2);
+    await decide(h, "plan", 2, "reject", { note: "still vague" });
+    await waitingAt(h, "plan", 3);
+    expect(turnsOf("plan")[2]!.feedback!.map((f) => `${f.kind}:${f.attempt}:${f.note}`)).toEqual(["rejected:1:too vague", "rejected:2:still vague"]);
+    await submit(h, "plan", 3, "plan", "P3", { outcome: "redo" });
+    await decide(h, "plan", 3, "approve", { note: "the spec misses refunds" });
+    await waitingAt(h, "specify", 2);
+    expect(turnsOf("specify")[1]!.feedback).toEqual([{ kind: "sent-back", stage: "specify", attempt: 3, by: "U2", note: "the spec misses refunds", outcome: "redo", from: "plan" }]);
+    await h.signal(cancelSignal, { by: "U1" });
+    await h.result();
+  });
+
+  test("a pack run routes from its snapshot: the roles pack end to end, with a failed QA gate and a second story", async () => {
+    const snapshot = (await loadPack(rolesPack)).pipelines[0]!;
+    const h = await start({ pipeline: "roles", snapshot });
+    const produces: Record<string, string> = { analyst: "brief", pm: "prd", architect: "architecture", story: "story", dev: "dev-record", qa: "qa-gate" };
+    const step = async (stage: string, attempt: number, outcome?: string) => {
+      await waitingAt(h, stage, attempt);
+      await submit(h, stage, attempt, produces[stage]!, `${stage}#${attempt}`, outcome ? { outcome } : {});
+      await decide(h, stage, attempt);
+    };
+    await step("analyst", 1);
+    await step("pm", 1);
+    await step("architect", 1);
+    await step("story", 1, "ready");
+    await step("dev", 1);
+    await step("qa", 1, "fail");
+    await step("dev", 2);
+    await step("qa", 2, "pass");
+    await step("story", 2, "none-left");
+    const res = (await h.result()) as PipelineResult;
+    expect(res.finish).toBe("done");
+    expect(res.state.definitionHash).toBe(snapshot.hash);
+
+    const dev2 = turnsOf("dev")[1]!;
+    expect(dev2.spec?.persona).toBe("roles/dev");
+    expect(dev2.pins).toEqual(snapshot.pins);
+    expect(dev2.inputs!.map((v) => `${v.artifact}:${v.content}`)).toEqual(["story:story#1", "qa-gate:qa#1"]);
+    expect(dev2.feedback).toEqual([expect.objectContaining({ kind: "sent-back", from: "qa", outcome: "fail" })]);
+    expect(turnsOf("story")[1]!.inputs!.map((v) => `${v.artifact}:${v.seq}`)).toEqual(["prd:1", "architecture:1", "story:1", "qa-gate:2"]);
+    expect(calls.filter((c) => c.kind === "commit").map((c) => (c.path as string).replace(`docs/factory/${h.workflowId}/`, ""))).toEqual([
+      "brief.md", "prd.md", "architecture.md", "stories/1.md", "dev-records/1.md", "qa-gates/1.md", "dev-records/2.md", "qa-gates/2.md", "stories/2.md",
+    ]);
   });
 });

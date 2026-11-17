@@ -13,7 +13,7 @@ import { lstat, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Registry } from "./registry.js";
-import type { LoadedSkill, SkillDecl } from "./types.js";
+import type { LoadedSkill, LoadedText, SkillDecl, SkillSource, TextDecl } from "./types.js";
 
 export interface SkillLimits {
   /** Longest chain of references from SKILL.md. */
@@ -44,6 +44,8 @@ export interface LoadSkillsOptions {
 
 export interface LoadedSkills {
   skills: Map<string, LoadedSkill>;
+  /** Personas and templates, keyed `persona:<name>` / `template:<name>`. */
+  texts: Map<string, LoadedText>;
   warnings: string[];
 }
 
@@ -76,11 +78,11 @@ type ReadResult =
  * The one place a path becomes file content. Anything unsafe throws; a file that is merely
  * absent or not loadable by policy (dotfile, directory) comes back as missing/skip.
  */
-async function readSafe(realRoot: string, abs: string, maxBytes: number, ctx: string): Promise<ReadResult> {
+export async function readSafe(realRoot: string, abs: string, maxBytes: number, ctx: string, exts: Set<string> = TEXT_EXT): Promise<ReadResult> {
   if (abs.includes("\0")) throw new SkillError(`${ctx}: reference contains a NUL byte`);
   const rel = path.relative(realRoot, abs);
   if (rel === "" || escapes(rel)) throw new SkillError(`${ctx}: reference leaves the skill folder`);
-  if (!hasTextExt(rel)) return { kind: "skip", reason: "not a .md/.txt file" };
+  if (!exts.has(path.extname(rel).toLowerCase())) return { kind: "skip", reason: `not a ${[...exts].join("/")} file` };
   const segs = rel.split(path.sep);
   if (segs.some((s) => s.startsWith("."))) return { kind: "skip", reason: "hidden file or folder" };
 
@@ -155,30 +157,58 @@ function extractRefs(text: string): Ref[] {
   return refs;
 }
 
+/** The package's folder (realpath), for a `{ package }` source. */
+async function packageDir(pkg: string, appRoot: string, label: string): Promise<{ dir: string; json: string }> {
+  let pkgJson: string;
+  try { pkgJson = createRequire(path.join(appRoot, "noop.js")).resolve(`${pkg}/package.json`); }
+  catch { throw new SkillError(`${label}: cannot resolve package "${pkg}" (is it installed, and does it export ./package.json?)`); }
+  return { dir: await realpath(path.dirname(pkgJson)), json: pkgJson };
+}
+
 async function resolveRoot(decl: SkillDecl, appRoot: string): Promise<string> {
   const { source } = decl;
+  const label = `skill "${decl.name}"`;
   let dir: string;
   let boundary: string | undefined;
-  if ("path" in source) {
+  if (!("package" in source)) {
     dir = path.resolve(appRoot, source.path);
   } else {
-    let pkgJson: string;
-    try { pkgJson = createRequire(path.join(appRoot, "noop.js")).resolve(`${source.package}/package.json`); }
-    catch { throw new SkillError(`skill "${decl.name}": cannot resolve package "${source.package}" (is it installed, and does it export ./package.json?)`); }
-    const pkgDir = path.dirname(pkgJson);
-    const meta = JSON.parse(await readFile(pkgJson, "utf8")) as { skill?: unknown };
-    const sub = typeof meta.skill === "string" ? meta.skill : "skill";
-    dir = path.resolve(pkgDir, sub);
-    boundary = await realpath(pkgDir);
+    const pkg = await packageDir(source.package, appRoot, label);
+    let sub = source.path;
+    if (sub === undefined) {
+      const meta = JSON.parse(await readFile(pkg.json, "utf8")) as { skill?: unknown };
+      sub = typeof meta.skill === "string" ? meta.skill : "skill";
+    }
+    dir = path.resolve(pkg.dir, sub);
+    boundary = pkg.dir;
   }
   let real: string;
   try { real = await realpath(dir); }
-  catch { throw new SkillError(`skill "${decl.name}": folder ${dir} does not exist`); }
-  if (boundary && escapes(path.relative(boundary, real))) throw new SkillError(`skill "${decl.name}": the package's skill folder is outside the package`);
+  catch { throw new SkillError(`${label}: folder ${dir} does not exist`); }
+  if (boundary && escapes(path.relative(boundary, real))) throw new SkillError(`${label}: the package's skill folder is outside the package`);
   return real;
 }
 
-async function loadOne(decl: SkillDecl, appRoot: string, limits: SkillLimits, warn: (m: string) => void, registered: Set<string>): Promise<LoadedSkill> {
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+
+/** Read one persona/template/instructions file with the skill rules: inside its root, no symlinks, .md/.txt, size-capped. */
+export async function loadTextFile(kind: LoadedText["kind"], name: string, source: SkillSource, appRoot: string, maxBytes: number): Promise<LoadedText> {
+  const label = `${kind} "${name}"`;
+  let root: string;
+  let file: string;
+  if (!("package" in source)) {
+    root = await realpath(appRoot);
+    file = path.resolve(root, source.path);
+  } else {
+    root = (await packageDir(source.package, appRoot, label)).dir;
+    file = path.resolve(root, source.path ?? "");
+  }
+  const r = await readSafe(root, file, maxBytes, label);
+  if (r.kind !== "ok") throw new SkillError(`${label}: ${toPosix(path.relative(root, file))} ${r.kind === "missing" ? "does not exist" : `cannot be loaded (${r.reason})`}`);
+  return { kind, name, hash: sha256(r.content), content: r.content };
+}
+
+export async function loadOne(decl: SkillDecl, appRoot: string, limits: SkillLimits, warn: (m: string) => void, registered: Set<string>): Promise<LoadedSkill> {
   const realRoot = await resolveRoot(decl, appRoot);
   const label = `skill "${decl.name}"`;
   const files = new Map<string, string>();
@@ -258,7 +288,11 @@ async function loadOne(decl: SkillDecl, appRoot: string, limits: SkillLimits, wa
 
 interface LockFile {
   skills: Record<string, { source: SkillDecl["source"]; hash: string }>;
+  personas?: Record<string, { source: SkillSource; hash: string }>;
+  templates?: Record<string, { source: SkillSource; hash: string }>;
 }
+
+const lockSection = (kind: TextDecl["kind"]) => (kind === "persona" ? "personas" : "templates") as "personas" | "templates";
 
 const lockPathFor = (o: LoadSkillsOptions) => o.lockPath ?? path.join(o.root, "skills.lock.json");
 
@@ -274,6 +308,10 @@ async function readLock(file: string): Promise<LockFile | undefined> {
 export async function writeLock(registry: Registry, loaded: LoadedSkills, file: string): Promise<void> {
   const lock: LockFile = { skills: {} };
   for (const d of registry.getSkillDecls()) lock.skills[d.name] = { source: d.source, hash: loaded.skills.get(d.name)!.hash };
+  for (const d of registry.getTextDecls()) {
+    const section = (lock[lockSection(d.kind)] ??= {});
+    section[d.name] = { source: d.source, hash: loaded.texts.get(`${d.kind}:${d.name}`)!.hash };
+  }
   await writeFile(file, JSON.stringify(lock, null, 2) + "\n");
 }
 
@@ -286,11 +324,13 @@ export async function loadSkills(registry: Registry, options: LoadSkillsOptions)
   const registered = new Set(decls.map((d) => d.name));
   const skills = new Map<string, LoadedSkill>();
   for (const d of decls) skills.set(d.name, await loadOne(d, options.root, limits, warn, registered));
+  const texts = new Map<string, LoadedText>();
+  for (const d of registry.getTextDecls()) texts.set(`${d.kind}:${d.name}`, await loadTextFile(d.kind, d.name, d.source, options.root, limits.maxFileBytes));
 
-  return verifyAndFinish(registry, options, limits, skills, warnings);
+  return verifyAndFinish(registry, options, limits, skills, texts, warnings);
 }
 
-async function verifyAndFinish(registry: Registry, options: LoadSkillsOptions, limits: SkillLimits, skills: Map<string, LoadedSkill>, warnings: string[]): Promise<LoadedSkills> {
+async function verifyAndFinish(registry: Registry, options: LoadSkillsOptions, limits: SkillLimits, skills: Map<string, LoadedSkill>, texts: Map<string, LoadedText>, warnings: string[]): Promise<LoadedSkills> {
   // Per-stage budget: what each turn of the stage carries.
   for (const s of registry.getStages()) {
     const bytes = (s.skills ?? []).reduce((n, k) => n + (skills.get(k)?.files.reduce((m, f) => m + Buffer.byteLength(f.content), 0) ?? 0), 0);
@@ -308,10 +348,16 @@ async function verifyAndFinish(registry: Registry, options: LoadSkillsOptions, l
       if (!entry) problems.push(`skill "${name}" is not in the lockfile`);
       else if (entry.hash !== sk.hash) problems.push(`skill "${name}" changed since it was locked (lock ${entry.hash.slice(0, 12)}, now ${sk.hash.slice(0, 12)})`);
     }
+    for (const t of texts.values()) {
+      if (t.kind === "instructions") continue;
+      const entry = lock?.[lockSection(t.kind)]?.[t.name];
+      if (!entry) problems.push(`${t.kind} "${t.name}" is not in the lockfile`);
+      else if (entry.hash !== t.hash) problems.push(`${t.kind} "${t.name}" changed since it was locked (lock ${entry.hash.slice(0, 12)}, now ${t.hash.slice(0, 12)})`);
+    }
     if (problems.length) {
       if (mode === "enforce") throw new SkillError(`skills do not match ${file}:\n- ${problems.join("\n- ")}`);
       for (const p of problems) warnings.push(`lockfile: ${p}`);
     }
   }
-  return { skills, warnings };
+  return { skills, texts, warnings };
 }

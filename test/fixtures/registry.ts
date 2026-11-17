@@ -20,3 +20,16 @@ registry.stage({ name: "draft", runsIn: "host", next: () => "review" });
 registry.stage({ name: "review", runsIn: "host", next: (a) => (a.outcome === "revise" ? "draft" : { finish: "done" }) });
 for (const s of ["draft", "review"]) registry.prompt(s, (i) => `${i.stage}#${i.attempt}${i.note ? ` note=${i.note}` : ""}`);
 registry.pipeline({ name: "loop", version: 1, stages: ["draft", "review"], defaults });
+
+// A method pipeline in code: specify produces a spec, plan reads it; plan's outcome "redo" sends the
+// run back to specify. Templates and personas are only declared here (the registry does no I/O).
+registry.persona("writer", { path: "personas/writer.md" });
+registry.template("spec", { path: "templates/spec.md" });
+registry.template("plan", { path: "templates/plan.md" });
+registry.stage({ name: "specify", runsIn: "host", persona: "writer", produces: { artifact: "spec", template: "spec", commit: "docs/{runId}/spec-{seq}.md" }, next: () => "plan" });
+registry.stage({
+  name: "plan", runsIn: "host", reads: ["spec"], outcomes: ["ok", "redo"], produces: { artifact: "plan", template: "plan" },
+  next: (a, _ctx, artifacts) => (a.outcome === "redo" ? "specify" : { finish: `done:${artifacts.spec?.seq}` }),
+});
+for (const s of ["specify", "plan"]) registry.prompt(s, (i) => `${i.stage}#${i.attempt}`);
+registry.pipeline({ name: "spec", version: 1, stages: ["specify", "plan"], defaults });

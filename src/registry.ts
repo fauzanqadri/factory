@@ -1,4 +1,5 @@
-import type { HookEventName, HookHandler, HookOptions, PipelineDef, PromptFn, RegisteredHook, SkillDecl, SkillOptions, SkillSource, StageDef, StageName } from "./types.js";
+import { isSafeRepoPath } from "./artifacts.js";
+import type { HookEventName, HookHandler, HookOptions, PipelineDef, PromptFn, RegisteredHook, SkillDecl, SkillOptions, SkillSource, StageDef, StageName, TextDecl } from "./types.js";
 
 // This module is bundled into Temporal's workflow sandbox: no node:* imports here.
 // Skill files are read by ./skills.js, which only the worker side imports.
@@ -6,7 +7,12 @@ export interface Registry {
   stage(def: StageDef): void;
   /** Declare a skill folder. Files are read (and checked) at worker start by `loadSkills`. */
   skill(name: string, source: SkillSource, options?: SkillOptions): void;
+  /** Declare a persona: one Markdown file (a Hermes SOUL.md, a BMAD agent file, plain text). Read at worker start. */
+  persona(name: string, source: SkillSource): void;
+  /** Declare an artifact template: one Markdown file whose `*(mandatory)*` headings an artifact must fill. */
+  template(name: string, source: SkillSource): void;
   getSkillDecls(): SkillDecl[];
+  getTextDecls(): TextDecl[];
   getStages(): StageDef[];
   pipeline(def: PipelineDef): void;
   prompt(stage: StageName, fn: PromptFn): void;
@@ -33,24 +39,51 @@ export function createRegistry(): Registry {
   const prompts = new Map<StageName, PromptFn>();
   const hooks: RegisteredHook[] = [];
   const skills = new Map<string, SkillDecl>();
+  const texts = new Map<string, TextDecl>();
   const list = (v: string | string[] | undefined) => (v === undefined ? undefined : Array.isArray(v) ? v : [v]);
   const key = (name: string, version: number) => `${name}@${version}`;
+  const checkName = (kind: string, name: string) => {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error(`${kind} name "${name}" must be letters, digits, ".", "_" or "-"`);
+  };
+  const checkSource = (label: string, source: SkillSource, pathRequired: boolean) => {
+    const hasPkg = "package" in source && typeof source.package === "string" && source.package !== "";
+    const hasPath = "path" in source && typeof source.path === "string" && source.path !== "";
+    if (!hasPkg && !hasPath) throw new Error(`${label}: give a path, or a package (with an optional path inside it)`);
+    if ("package" in source && !hasPkg) throw new Error(`${label}: package must be a non-empty string`);
+    if (pathRequired && !hasPath) throw new Error(`${label}: give the path of the file (inside the package, for a package source)`);
+  };
+  const addText = (kind: TextDecl["kind"], name: string, source: SkillSource) => {
+    checkName(kind, name);
+    const k = `${kind}:${name}`;
+    if (texts.has(k)) throw new Error(`${kind} "${name}" is already registered`);
+    checkSource(`${kind} "${name}"`, source, true);
+    texts.set(k, { kind, name, source });
+  };
 
   return {
     stage(def) {
       if (stages.has(def.name)) throw new Error(`stage "${def.name}" is already registered`);
+      if (def.clarify && (!Number.isInteger(def.clarify.max) || def.clarify.max < 0)) throw new Error(`stage "${def.name}": clarify.max must be a whole number, 0 or more`);
+      if (def.produces?.commit !== undefined && !isSafeRepoPath(def.produces.commit)) throw new Error(`stage "${def.name}": produces.commit must be a path inside the repo (relative, no "..")`);
       stages.set(def.name, def);
     },
     skill(name, source, options = {}) {
-      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) throw new Error(`skill name "${name}" must be letters, digits, ".", "_" or "-"`);
+      checkName("skill", name);
       if (skills.has(name)) throw new Error(`skill "${name}" is already registered`);
-      const hasPath = "path" in source && typeof source.path === "string" && source.path !== "";
-      const hasPkg = "package" in source && typeof source.package === "string" && source.package !== "";
-      if (hasPath === hasPkg) throw new Error(`skill "${name}": give exactly one of path or package`);
+      checkSource(`skill "${name}"`, source, false);
       skills.set(name, { name, source, options });
+    },
+    persona(name, source) {
+      addText("persona", name, source);
+    },
+    template(name, source) {
+      addText("template", name, source);
     },
     getSkillDecls() {
       return [...skills.values()];
+    },
+    getTextDecls() {
+      return [...texts.values()];
     },
     getStages() {
       return [...stages.values()];
@@ -106,11 +139,22 @@ export function createRegistry(): Registry {
       const problems: string[] = [];
       for (const s of stages.values()) {
         for (const k of s.skills ?? []) if (!skills.has(k)) problems.push(`stage "${s.name}" uses unregistered skill "${k}"`);
+        if (s.persona && !texts.has(`persona:${s.persona}`)) problems.push(`stage "${s.name}" uses unregistered persona "${s.persona}"`);
+        if (s.produces && !texts.has(`template:${s.produces.template}`)) problems.push(`stage "${s.name}" uses unregistered template "${s.produces.template}"`);
+        if (s.outcomes && s.outcomes.length === 0) problems.push(`stage "${s.name}" declares an empty outcomes list (omit it to allow any outcome)`);
+        if (s.checklist && !s.produces) problems.push(`stage "${s.name}" has a checklist but produces no artifact to answer it with`);
       }
       for (const p of pipelines.values()) {
+        const at = `pipeline "${key(p.name, p.version)}"`;
+        for (const k of p.skills ?? []) if (!skills.has(k)) problems.push(`${at} uses unregistered skill "${k}" as a project rule`);
+        const produced = new Set(p.stages.flatMap((n) => { const st = stages.get(n); return st?.produces ? [st.produces.artifact] : []; }));
         for (const s of p.stages) {
-          if (!stages.has(s)) problems.push(`pipeline "${key(p.name, p.version)}" uses unregistered stage "${s}"`);
-          else if (!prompts.has(s)) problems.push(`stage "${s}" (pipeline "${key(p.name, p.version)}") has no prompt`);
+          const st = stages.get(s);
+          if (!st) problems.push(`${at} uses unregistered stage "${s}"`);
+          else {
+            if (!prompts.has(s)) problems.push(`stage "${s}" (${at}) has no prompt`);
+            for (const r of st.reads ?? []) if (!produced.has(r)) problems.push(`stage "${s}" (${at}) reads "${r}", which no stage of the pipeline produces`);
+          }
         }
       }
       const pipelineNames = new Set([...pipelines.values()].map((p) => p.name));
