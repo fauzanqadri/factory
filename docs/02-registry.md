@@ -128,7 +128,7 @@ registry.stage({ name: "review", runsIn: "sandbox", skills: ["no-ai-slop"], mode
 
 **What fails worker start:** a link or bare name that leaves the skill folder (including `%2e%2e` and absolute paths), a symlink anywhere on the way, a file that is not a regular file, a missing `SKILL.md` or a frontmatter `name` that differs from the registered name, and any limit exceeded (depth 5, 40 files, 64 KB a file, 200 KB a skill, 400 KB per stage; override with `skills: { limits }`). Hidden files, URLs, non-text targets and missing children are skipped, and missing or ambiguous ones are logged as warnings, as are mentions of other skills (`owner/repo@name`) that are not registered here.
 
-**Lockfile.** If `skills.lock.json` exists at the app root (`writeLock` writes it), each skill's content hash must match it, or the worker refuses to start; `skills: { lock: "warn" | "off" }` relaxes that. Review the diff when a vendored skill changes: skill text is instructions to the agent, and the hash is the defense against a changed one.
+**Lockfile.** If `skills.lock.json` exists at the app root (`writeLock` from `@fauzanqadri/factory/server` writes it), each skill's content hash must match it, or the worker refuses to start; `skills: { lock: "warn" | "off" }` relaxes that. Review the diff when a vendored skill changes: skill text is instructions to the agent, and the hash is the defense against a changed one.
 
 **`model` is advisory.** It is sent to the chat host as an optional `model` field of the turn request. factory cannot make a host use it; until the host reads the field it has no effect, and a model the host does not know is the host's to reject or ignore.
 

@@ -14,9 +14,6 @@ A snapshot for whoever picks this project up again (written 2026-11-14, updated 
 | Claude Code support | Not built; see the decision below |
 
 **Merged.** `feat/skills-loader` and `fix/loop-attempts` (stacked on it) were fast-forwarded into `main` on 2026-11-17. The branches and the `.claude/worktrees/loop-visits` worktree were then deleted.
-
-Open bug: `src/index.ts` re-exports the skills loader, which imports `node:*`, so an app's `registry.ts` that imports `createRegistry` from the package root (as the README example does) fails to bundle into the workflow. Importing from `src/registry` works. Fix by adding a `./registry` export, or by moving `renderSkills` out of `skills.ts` so the root is sandbox-safe again.
-
 ## The loop bug (fixed)
 
 `next()` may return any stage in the pipeline, including an earlier one, so a pipeline can loop (review sends the run back to draft). `attempt` used to restart at 1 on every visit, so the second visit reused the first visit's turn `requestId` and hook `eventId`. The chat host drops a repeated `requestId` as a Temporal retry, so the revisit never ran a turn, and a card from the first visit was accepted as current. `attempt` is now counted per stage across the whole run. Runs that never loop behave exactly as before.

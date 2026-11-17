@@ -1,7 +1,7 @@
 import { ApplicationFailure } from "@temporalio/common";
 import { dispatchEvent } from "./hooks.js";
 import type { Registry } from "./registry.js";
-import { renderSkills } from "./skills.js";
+import { renderSkills } from "./render-skills.js";
 import type { FinishReason, HookEvent, LoadedSkill, RunContext, StageName } from "./types.js";
 
 export interface HostConfig {

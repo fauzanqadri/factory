@@ -22,7 +22,7 @@ my-app/
 
 ## Steps
 
-1. **Register stages and pipelines** in `src/registry.ts` ([02-registry.md](02-registry.md)). Keep the module free of I/O: it is bundled into the workflow.
+1. **Register stages and pipelines** in `src/registry.ts` ([02-registry.md](02-registry.md)). Keep the module free of I/O: it is bundled into the workflow. Import from `@fauzanqadri/factory`, which is sandbox-safe, never from `@fauzanqadri/factory/server`.
 2. **Register a prompt for every stage** in `src/prompts.ts`. Prompts may read the run's facts, the attempt and the last rejection note, and may change freely between deploys.
 3. **Export the workflow** in `src/workflows.ts`. It is the only file the Temporal bundler loads:
    ```ts

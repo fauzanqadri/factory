@@ -1,6 +1,6 @@
 /**
- * Skill loader. Node-only: it reads the filesystem, so it must never be imported by the
- * workflow bundle (only the worker side: startFactory and the activities use it).
+ * Skill loader. Node-only: it reads the filesystem, so it must never be reachable from the
+ * workflow bundle or the package root. Only ./server.js imports and re-exports it.
  *
  * A skill is a folder with a SKILL.md. Only files reachable from SKILL.md load: relative
  * Markdown links resolve against the file that holds them, bare names such as `eval.md`
@@ -314,15 +314,4 @@ async function verifyAndFinish(registry: Registry, options: LoadSkillsOptions, l
     }
   }
   return { skills, warnings };
-}
-
-/** The text prepended to a stage's prompt. Deterministic: skills in the order given, files as loaded. */
-export function renderSkills(skills: LoadedSkill[]): string {
-  if (skills.length === 0) return "";
-  const parts = ["The following skills apply to this stage. Follow them."];
-  for (const s of skills) {
-    parts.push(`## Skill: ${s.name}${s.description ? `\n${s.description}` : ""}`);
-    for (const f of s.files) parts.push(`### ${s.name}/${f.path}\n\n${f.content.trimEnd()}`);
-  }
-  return parts.join("\n\n");
 }

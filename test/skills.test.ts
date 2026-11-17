@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { createRegistry, loadSkills, renderSkills, SkillError, writeLock } from "../src";
+import { createRegistry, renderSkills } from "../src";
+import { loadSkills, SkillError, writeLock } from "../src/server";
 import { parseFrontmatter } from "../src/skills";
 
 const fixtures = path.join(__dirname, "fixtures");

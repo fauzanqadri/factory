@@ -10,7 +10,7 @@ An app built on factory registers its stages and pipelines in a registry. The fr
 
 The chat host (the reference is [slaude](https://github.com/barockok/slaude)) runs the agent turns and shows the approval cards.
 
-Status: the registry, hooks, the pipeline workflow, its activities, the HTTP API and `startFactory()` are implemented and tested (49 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
+Status: the registry, hooks, the pipeline workflow, its activities, per-stage skills, the HTTP API and `startFactory()` are implemented and tested (51 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
 
 ## Why
 
@@ -97,12 +97,15 @@ src/
   hooks.ts       dispatchEvent(): runs event hooks, required first
   workflow.ts    makePipelineWorkflow(): the Temporal workflow (import from "@fauzanqadri/factory/workflow")
   activities.ts  makeActivities(): runStage, emit, remind, finish (calls the chat host)
+  render-skills.ts  renderSkills(): the skills text prepended to a stage's prompt
+  skills.ts      loadSkills(), writeLock(): reads and checks skill folders (node-only, exported from "@fauzanqadri/factory/server")
   server.ts      createApi() and startFactory(): HTTP API + worker in one process
-  index.ts       public exports
+  index.ts       public exports; sandbox-safe, so an app's registry can import from it
 test/
-  registry.test.ts, hooks.test.ts, activities.test.ts, server.test.ts
+  registry.test.ts, hooks.test.ts, activities.test.ts, server.test.ts, skills.test.ts
   workflow.test.ts   the engine against the time-skipping test server
-  fixtures/          a sample registry and workflows file
+  bundle.test.ts     a workflows file importing from the package root bundles (no node:* reachable)
+  fixtures/          a sample registry and workflows files, skill folders
 docs/            design (above), diagrams in docs/diagrams
 ```
 

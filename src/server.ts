@@ -8,6 +8,9 @@ import { loadSkills, type LoadSkillsOptions } from "./skills.js";
 import type { Approval, StartRun } from "./types.js";
 import { approvalSignal, cancelSignal, runIdFor, stateQuery, type PipelineInput } from "./workflow.js";
 
+// Node-only, so exported here rather than from the sandbox-safe package root.
+export { loadSkills, writeLock, SkillError, DEFAULT_SKILL_LIMITS, type LoadSkillsOptions, type LoadedSkills, type SkillLimits } from "./skills.js";
+
 /** The part of the Temporal client the API uses (a real `Client`, or a fake in tests). */
 export interface WorkflowClientLike {
   workflow: Pick<Client["workflow"], "start" | "getHandle">;
