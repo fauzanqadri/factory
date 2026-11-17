@@ -7,10 +7,13 @@ An app describes its work by registering stages, pipelines and prompts. The work
 ```ts
 const registry = createRegistry();
 
-registry.stage({ name, runsIn, remindAfter?, gateTimeout?, skills?, model?, next });
-registry.pipeline({ name, version, stages, defaults: { remindAfter, gateTimeout } });
+registry.stage({ name, runsIn, remindAfter?, gateTimeout?, skills?, model?, effort?,
+                 persona?, produces?, reads?, checklist?, outcomes?, clarify?, skip?, check?, next });
+registry.pipeline({ name, version, stages, defaults: { remindAfter, gateTimeout }, skills? });
 registry.prompt(stageName, (input) => string);
-registry.skill(name, { path } | { package }, { include? });  // skills (below)
+registry.skill(name, { path } | { package, path? }, { include? });  // skills (below)
+registry.persona(name, { path } | { package, path });               // methods (09)
+registry.template(name, { path } | { package, path });              // methods (09)
 registry.on(event, options?, handler);  // event hooks (below)
 
 registry.getStage(name);
@@ -20,12 +23,21 @@ registry.validate();                    // [] when every pipeline stage exists a
 ```
 
 Registration throws on:
-- a duplicate stage, prompt or skill name, or a skill source that is not exactly one of `path` and `package`;
+- a duplicate stage, prompt, skill, persona or template name, or a source with neither `path` nor `package` (a persona or template needs the file's `path`, also inside a package);
+- a `clarify.max` that is not a whole number, 0 or more;
 - a pipeline with no stages;
 - a version that is not a positive integer;
 - a `name@version` registered twice.
 
-`validate()` lists every pipeline stage that is unregistered or has no prompt, and every stage whose `skills` names an unregistered skill, and every hook whose `stage` or `pipeline` filter names something unregistered. A worker should refuse to start when it returns anything.
+`validate()` lists every problem it finds, and a worker should refuse to start when it returns anything:
+- every pipeline stage that is unregistered or has no prompt;
+- every stage whose `skills`, `persona` or `produces.template` names something unregistered;
+- every `reads` that no stage of the pipeline produces;
+- every empty `outcomes` list, and every checklist on a stage that produces nothing;
+- every project rule (`pipeline.skills`) that is not a registered skill;
+- every hook whose `stage` or `pipeline` filter names something unregistered.
+
+The method fields (`persona`, `produces`, `reads`, `checklist`, `outcomes`, `clarify`, `effort`, `check`, and `pipeline.skills` as project rules) are described in [09-methods-and-packs.md](09-methods-and-packs.md). A pipeline can also come from a pack folder, with no registry code at all ([09](09-methods-and-packs.md#as-a-pack-no-typescript)).
 
 ## Example: three pipelines from one set of stages
 
@@ -66,8 +78,9 @@ registry.on("run.finished",   { mode: "required" }, async (e) => tracker.comment
 | `run.started` | after the run starts | |
 | `stage.started` | before the stage turn, on every attempt | `stage`, `attempt` |
 | `stage.skipped` | when a stage's `skip` returned true | `stage` |
-| `stage.approved` | when an approval arrives | `stage`, `attempt`, `approval` |
+| `stage.approved` | when an approval arrives (for a stage with an artifact: after it is frozen and committed) | `stage`, `attempt`, `approval`, `artifact` (the frozen version, with its commit) |
 | `stage.rejected` | when a rejection arrives | `stage`, `attempt`, `approval` (with the note) |
+| `stage.clarified` | when a person answers an artifact's open questions | `stage`, `attempt`, `approval` (with the answers) |
 | `gate.reminded` | when `remindAfter` fires | `stage`, `waitingSince` |
 | `run.finished` | before the finish callback | `finish` |
 
@@ -81,7 +94,7 @@ Rules:
 
 ### Decision hooks (shape the path)
 
-`skip(ctx)` and `next(approval, ctx)` live on the stage and run inside the workflow. They must be pure functions of plain data. A stage whose `skip` returns true has no turn and no gate: the run emits `stage.skipped` and moves to what `next` returns for an automatic approval. Changing a decision hook needs a new pipeline version, like changing the stage order.
+`skip(ctx)` and `next(approval, ctx, artifacts)` live on the stage and run inside the workflow (`artifacts` holds the latest approved version of each artifact). They must be pure functions of plain data. A stage whose `skip` returns true has no turn and no gate: the run emits `stage.skipped` and moves to what `next` returns for an automatic approval. Changing a decision hook needs a new pipeline version, like changing the stage order.
 
 ```ts
 registry.stage({
@@ -106,7 +119,7 @@ registry.stage({
 
 ## Prompts live outside the workflow
 
-The workflow sends only `{ stage, attempt, note }` to the activity that starts a turn. That activity calls `registry.getPrompt(stage)` and builds the text from the run's facts. Prompt wording changes often, and activities may change between deploys without affecting replay. Changing a prompt therefore needs no new pipeline version.
+The workflow sends `{ stage, attempt, note }` to the activity that starts a turn, plus the approved artifacts the stage reads, its feedback and the run's clarifications. That activity calls `registry.getPrompt(stage)` (which receives all of these) and builds the text from the run's facts. Prompt wording changes often, and activities may change between deploys without affecting replay. Changing a prompt therefore needs no new pipeline version.
 
 ## Skills and model
 

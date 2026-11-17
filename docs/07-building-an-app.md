@@ -13,7 +13,9 @@ my-app/
     prompts.ts      registry.prompt(...) for each stage
     hooks.ts        registry.on(...) event hooks (tracker, chat, metrics)
   skills/           skill folders (SKILL.md and what it references), or npm packages
-  skills.lock.json  content hashes of the skills; the worker refuses to start on a mismatch
+  personas/, templates/   persona and template files for code-defined method stages
+  methods/          workflow packs (factory.yaml + personas, templates, stages, skills), if any
+  skills.lock.json  content hashes of the skills, personas and templates; the worker refuses to start on a mismatch
     workflows.ts    export const pipelineWorkflow = makePipelineWorkflow(registry)
     main.ts         startFactory({ registry, workflowsPath, ... })
   test/
@@ -48,7 +50,15 @@ my-app/
      port: Number(env("PORT") || 8080),
    });
    ```
-   `startFactory` runs `registry.validate()`, loads and checks the skills ([02](02-registry.md#skills-and-model); the app root defaults to the working directory, override with `skills: { root }`), and refuses to start on any problem, or when the callback token is shorter than 32 characters or the API token is empty. It then starts the Temporal worker and the HTTP API in one process. The dashboard will mount on the same port once built.
+   To run a method from a pack (no registry code needed), add `packs`:
+   ```ts
+   import { rolesPack, startFactory } from "@fauzanqadri/factory/server";
+   await startFactory({ ..., packs: [rolesPack, "methods/my-method"] });
+   // or change the roles pack without copying it: files in the overlay replace the pack's
+   await startFactory({ ..., packs: [{ dir: rolesPack, overlays: ["methods/roles-local"] }] });
+   ```
+   Pipeline names must be unique across the registry and every pack.
+   `startFactory` runs `registry.validate()`, loads and checks the skills, personas, templates and packs ([02](02-registry.md#skills-and-model); the app root defaults to the working directory, override with `skills: { root }`), and refuses to start on any problem, or when the callback token is shorter than 32 characters or the API token is empty. It then starts the Temporal worker and the HTTP API in one process. The dashboard will mount on the same port once built.
 5. **Test the app's paths** with `@temporalio/testing` (time skipping). For each pipeline, approve, reject and time out each stage, and check the finish reason.
 
 ## Configuration (env only, one image for every environment)
@@ -66,6 +76,8 @@ my-app/
 | Change | How |
 |---|---|
 | Prompt wording | Edit the prompt and deploy. Running runs pick it up on their next stage |
+| A persona or template | Update the file (and `skills.lock.json`) and deploy. Running runs pick it up on their next turn; for a pack, the turn's fingerprint records the drift (`pin: strict` refuses it) |
+| A pack's stages, routing or checklists | Edit `factory.yaml` and deploy. No version bump: running runs keep the copy they started with, new runs get the new one |
 | A skill's text, or which skills a stage uses | Update the skill (and `skills.lock.json`) and deploy. No new pipeline version; running runs pick it up on their next stage turn |
 | Event hooks | Add, change or remove handlers and deploy. No new pipeline version |
 | A `skip` rule | A decision hook: register a new pipeline version |

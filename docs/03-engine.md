@@ -47,6 +47,22 @@ export function makePipelineWorkflow(registry: Registry) {
 
 Finish emits `run.finished`, calls activity `finish` (the host posts a closing line), and ends the workflow.
 
+## Stages with an artifact
+
+A stage with `produces` ([09](09-methods-and-packs.md)) changes step 2. The gate acts on what the run holds for the current attempt:
+- **`artifact` signal**: the API checked a submission and signals it. It becomes the attempt's candidate; a later one replaces it, and one for another attempt is ignored.
+- **approve**: needs a candidate with no open questions; otherwise the approval is dropped (the API already refused it with `409`). The candidate is frozen into `state.artifacts` as the next version. If `produces.commit` is set, activity `commit` asks the host to commit it (`requestId = <runId>:commit:<artifact>:<seq>`) and the sha is recorded. Then `stage.approved` is emitted with the version. The approval's outcome, or else the artifact's, drives routing.
+- **answer**: needs a candidate with open questions. The answers are added to `state.clarifications`, `stage.clarified` is emitted, and the stage runs again as the next attempt.
+- **reject**: as before.
+
+Each turn's input also carries the stage's feedback (every rejection, and every send-back from a later stage, with the note and outcome) and the run's clarifications. Each turn returns a fingerprint (prompt hash, file hashes, model, effort), recorded in `state.turns`.
+
+A stage without `produces` issues exactly the Temporal commands it did before, so runs started on earlier code replay unchanged.
+
+## Pack pipelines
+
+When the start input carries a `snapshot` (a pack pipeline, [09](09-methods-and-packs.md#snapshots-and-pinning)), the workflow takes the stages, defaults and project rules from it instead of the registry. It routes with the stage's table (`route[outcome]`, else `route["*"]`). The snapshot is part of the run's history, so replay always sees the definition the run started with; there is no `skip` for pack stages. If no route matches, the run finishes as `no-route` (the loader and the API make this unreachable in practice).
+
 `emit` is one activity for every event. It runs the app's handlers through `dispatchEvent` ([02-registry.md](02-registry.md#hooks)). Because the workflow's commands do not depend on which handlers exist, handlers can be added or removed between deploys without affecting replay.
 
 `runStage` returns as soon as the host **accepts** the turn, not when the agent finishes it. A turn can take minutes, and a code stage much longer. The run waits for the approval instead, which already means a person saw the result. That keeps activities short and their timeouts simple.
@@ -57,7 +73,10 @@ The workflow answers a `state` query with `RunState`:
 - the current stage and attempt;
 - running or finished, and the finish reason;
 - when the current gate started waiting;
-- the history of every decision (stage, attempt, approve or reject, by, at, note, outcome).
+- the history of every decision (stage, attempt, approve, reject or answer, by, at, note, outcome);
+- the pipeline, its version and, for a pack, the definition hash;
+- the current stage's contract (artifact, template, checklist, outcomes, clarification limit) and the candidate artifact;
+- every approved artifact version, the clarifications, and one fingerprint per turn.
 
 ## What the Temporal history looks like
 

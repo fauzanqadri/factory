@@ -15,7 +15,11 @@ factory runs a piece of work (a ticket, a support report, a request) through ord
 | **Participant** | A person the starter added to the run. The starter and participants are the only people who may approve or reject a stage |
 | **Gate** | The wait after a stage. It ends with an approval signal, a reminder timer that nudges the thread (default 24 h), or a give-up timer that cancels the run (default 7 days) |
 | **Hook** | An extension point. Event hooks (`registry.on`) run side effects such as tracker labels, metrics or info posts at fixed points of a run. Decision hooks (`skip`, `next`) choose the path |
-| **Outcome** | A value a stage reports with its approval, such as `code` or `answer`. `next` reads it to choose the path, for example finishing early when no code change is needed |
+| **Outcome** | A value a stage reports with its approval, such as `code` or `answer`. `next` reads it to choose the path, for example finishing early when no code change is needed. A stage may list its allowed outcomes; any other is refused |
+| **Artifact** | The document a stage produces from a template (a brief, a PRD, a story). Checked in code before anyone sees it, frozen when approved, committed to the repo, and handed to the stages that read it ([09](09-methods-and-packs.md)) |
+| **Persona** | One Markdown file saying who the agent is in a stage (a Hermes `SOUL.md`, a BMAD agent file, plain text) |
+| **Clarification** | A `[NEEDS CLARIFICATION: …]` question an artifact raised and the answer a person gave; every later prompt in the run includes it |
+| **Pack** | A method as a folder (`factory.yaml`, personas, templates, instructions, skills), no code needed. Its pipeline is copied into each run at start. factory ships one, the roles pack |
 
 ## Who does what
 

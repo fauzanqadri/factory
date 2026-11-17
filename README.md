@@ -10,7 +10,7 @@ An app built on factory registers its stages and pipelines in a registry. The fr
 
 The chat host (the reference is [slaude](https://github.com/barockok/slaude)) runs the agent turns and shows the approval cards.
 
-Status: the registry, hooks, the pipeline workflow, its activities, per-stage skills, the HTTP API and `startFactory()` are implemented and tested (51 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
+Status: the registry, hooks, the pipeline workflow, its activities, per-stage skills, the method layer (artifacts, templates, personas, checklists, clarifications), workflow packs with the bundled roles pack, the HTTP API and `startFactory()` are implemented and tested (88 tests, including the workflow against Temporal's time-skipping test server). The dashboard is specified in `docs/06-dashboard.md` and not built yet.
 
 ## Why
 
@@ -20,6 +20,14 @@ AI agents can take a ticket from intake to a pull request, but a team still want
 - nobody can see which tickets are stuck where.
 
 factory moves the lifecycle into a durable Temporal workflow. The chat thread keeps the conversation, the work and the approvals.
+
+Runs should also give the same kind of result every time. Like GitHub Spec Kit and the BMAD Method, factory gets that from structure, not sampling:
+- each stage writes one artifact from a template, and the artifact is checked in code before a person sees it;
+- approved artifacts are handed to later stages, and each turn runs in a fresh context;
+- open questions are capped, answered and recorded;
+- outcomes come from a fixed list.
+
+A method can be written in code or brought as a folder (a pack): a `factory.yaml` with personas, templates and instructions. [docs/09](docs/09-methods-and-packs.md) explains it, and the bundled roles pack (analyst → pm → architect → story → dev → qa) is an example to copy.
 
 ## How it fits together
 
@@ -47,6 +55,9 @@ The framework never talks to the sandbox. The chat host is the only part that ta
 | Gate | The wait after a stage for an approval signal, with a reminder timer and a give-up timer |
 | Skill | A folder of instructions (`SKILL.md` plus the files it references) the app owns and attaches to stages; its text is prepended to the stage prompt |
 | Hook | Event hooks (`registry.on("stage.approved", handler)`) for side effects at fixed points; decision hooks (`skip`, `next`) for the path |
+| Artifact | The document a stage produces from a template; checked, frozen on approval, committed, passed to later stages |
+| Persona | Who the agent is in a stage: one Markdown file (a Hermes `SOUL.md` or a BMAD agent file works as is) |
+| Pack | A method as a folder (`factory.yaml`, personas, templates, stage instructions, skills); its pipeline is copied into each run |
 
 ## An app in a few lines
 
@@ -86,7 +97,8 @@ registry.on("stage.approved", async (e) => tracker.addLabel(e.ticketRef, `approv
 | [05-chat-host.md](docs/05-chat-host.md) | What a chat host must provide (starter, participants, approval cards, turn injection) and how slaude does it |
 | [06-dashboard.md](docs/06-dashboard.md) | The monitoring page |
 | [07-building-an-app.md](docs/07-building-an-app.md) | How an app repo uses the framework, from registry to running worker |
-| [08-status-and-notes.md](docs/08-status-and-notes.md) | Where the work stopped: unpublished branches, the loop fix, and the Claude Code decision |
+| [08-status-and-notes.md](docs/08-status-and-notes.md) | Where the work stopped: unpublished branches, the loop fix, the method layer, and the Claude Code decision |
+| [09-methods-and-packs.md](docs/09-methods-and-packs.md) | Why runs varied, and how artifacts, templates, personas, checklists and packs make them consistent; the pack format and the roles pack |
 
 ## Repo layout
 
@@ -96,13 +108,17 @@ src/
   registry.ts    createRegistry(): stages, pipelines, prompts, hooks
   hooks.ts       dispatchEvent(): runs event hooks, required first
   workflow.ts    makePipelineWorkflow(): the Temporal workflow (import from "@fauzanqadri/factory/workflow")
-  activities.ts  makeActivities(): runStage, emit, remind, finish (calls the chat host)
+  activities.ts  makeActivities(): runStage, emit, remind, finish, commit (calls the chat host)
+  artifacts.ts   checkArtifact(), routeNext(), contractOf(): template checks and pack routing (pure)
+  assemble.ts    assemblePrompt(), sha256Hex(): the stage prompt in a fixed order (pure)
   render-skills.ts  renderSkills(): the skills text prepended to a stage's prompt
-  skills.ts      loadSkills(), writeLock(): reads and checks skill folders (node-only, exported from "@fauzanqadri/factory/server")
-  server.ts      createApi() and startFactory(): HTTP API + worker in one process
+  skills.ts      loadSkills(), writeLock(): reads and checks skills, personas and templates (node-only, exported from "@fauzanqadri/factory/server")
+  packs.ts       loadPack(): reads a factory.yaml folder into pipeline snapshots (node-only)
+  server.ts      createApi() and startFactory(): HTTP API + worker in one process; rolesPack
   index.ts       public exports; sandbox-safe, so an app's registry can import from it
+packs/roles/     the bundled roles pack (factory.yaml, personas, templates, stages)
 test/
-  registry.test.ts, hooks.test.ts, activities.test.ts, server.test.ts, skills.test.ts
+  registry.test.ts, hooks.test.ts, activities.test.ts, server.test.ts, skills.test.ts, artifacts.test.ts, packs.test.ts
   workflow.test.ts   the engine against the time-skipping test server
   bundle.test.ts     a workflows file importing from the package root bundles (no node:* reachable)
   fixtures/          a sample registry and workflows files, skill folders
