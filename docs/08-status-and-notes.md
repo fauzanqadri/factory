@@ -1,27 +1,21 @@
 # 08. Status and notes
 
-A snapshot for whoever picks this project up again (written 2026-11-14). The other docs describe behavior; this one records where the work stopped and why.
+A snapshot for whoever picks this project up again (written 2026-11-14, updated 2026-11-17). The other docs describe behavior; this one records where the work stopped and why.
 
 ## Where things stand
 
 | Piece | State |
 |---|---|
 | Registry, hooks, workflow engine, activities, HTTP API, `startFactory` | Built and tested (`docs/01..05`, `07`) |
-| Per-stage skills loader (`src/skills.ts`) and the advisory stage `model` | Built and tested; branch `feat/skills-loader` ([02](02-registry.md#skills-and-model)) |
-| Loop fix: `attempt` counts a stage's turns across the run | Built and tested; branch `fix/loop-attempts` ([03](03-engine.md)) |
+| Per-stage skills loader (`src/skills.ts`) and the advisory stage `model` | Built and tested; on `main` ([02](02-registry.md#skills-and-model)) |
+| Loop fix: `attempt` counts a stage's turns across the run | Built and tested; on `main` ([03](03-engine.md)) |
 | Dashboard | Specified in [06](06-dashboard.md), not built |
 | A chat host in this repo | None. The reference host is slaude, and its factory support is planned ([05](05-chat-host.md)) |
 | Claude Code support | Not built; see the decision below |
 
-**Unpublished work.** `fix/loop-attempts` sits on top of `feat/skills-loader`, so it holds both. Neither branch has been pushed or merged into `main`: the push failed with `Permission denied (publickey)` (no SSH key GitHub accepts for this repo). To finish:
+**Merged.** `feat/skills-loader` and `fix/loop-attempts` (stacked on it) were fast-forwarded into `main` on 2026-11-17. The branches and the `.claude/worktrees/loop-visits` worktree were then deleted.
 
-```
-git push -u origin feat/skills-loader fix/loop-attempts
-# then open a PR into main, merge, and delete the local branches and the
-# leftover worktree (.claude/worktrees/loop-visits, branch worktree-loop-visits)
-```
-
-If SSH keeps failing, switch the remote to HTTPS: `git remote set-url origin https://github.com/fauzanqadri/factory.git`.
+Open bug: `src/index.ts` re-exports the skills loader, which imports `node:*`, so an app's `registry.ts` that imports `createRegistry` from the package root (as the README example does) fails to bundle into the workflow. Importing from `src/registry` works. Fix by adding a `./registry` export, or by moving `renderSkills` out of `skills.ts` so the root is sandbox-safe again.
 
 ## The loop bug (fixed)
 
